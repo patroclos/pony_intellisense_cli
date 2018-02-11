@@ -1,12 +1,15 @@
-#include <string>
-#include <cstring>
-#include <experimental/filesystem>
-#include <CLI11.hpp>
 #include "ponyc_includes.hpp"
 #include "cli_opts.hpp"
 #include "dump_ast.hpp"
 #include "dump_scope.hpp"
 #include "main.hpp"
+
+#include <scope.pb.h>
+
+#include <string>
+#include <cstring>
+#include <experimental/filesystem>
+#include <CLI11.hpp>
 
 namespace fs = std::experimental::filesystem;
 
@@ -83,8 +86,8 @@ static bool parse_dir_files(ast_t *package, cli_opts_t options, pass_opt_t *pass
 		fullpath /= fs::path(file);
 
 		const char *err_msg = nullptr;
-		source_t *source = options.override_file_content == nullptr ? source_open(fullpath.string().c_str(), &err_msg)
-		                                                            : source_open_string(options.override_file_content);
+		source_t *source = fullpath.string() == options.file && options.override_file_content != nullptr ? source_open_string(options.override_file_content)
+		                                                            : source_open(fullpath.string().c_str(), &err_msg);
 
 		if (source == nullptr) {
 			if (err_msg == nullptr)
@@ -167,6 +170,7 @@ bool load_program_from_options(cli_opts_t options, pass_opt_t &pass, ast_t *&pro
 	pass.verify = false;
 	pass.allow_test_symbols = true;
 	pass.program_pass = PASS_PARSE;
+	pass.verbosity = VERBOSITY_MINIMAL;
 
 	opt_state_t state{};
 	ponyint_opt_init(ponyc_opt_std_args(), &state, nullptr, nullptr);
@@ -199,45 +203,8 @@ bool load_program_from_options(cli_opts_t options, pass_opt_t &pass, ast_t *&pro
 		return false;
 	}
 
-	/*
-	program = load_program(options.path.c_str(), &pass);
-	if (program == nullptr) {
-		fprintf(stderr, "Error loading program from %s\n", options.path.c_str());
-		errors_print(pass.check.errors);
-		return false;
-	}
-	 */
 	return true;
 }
-
-/*
-ast_t *load_program(const char *path, pass_opt_t *opt) {
-	path = stringtab(path);
-	ast_t *prog = ast_blank(TK_PROGRAM);
-	ast_scope(prog);
-
-	opt->program_pass = PASS_PARSE;
-
-	// load builtin and specified packages
-	//package_add_magic_src(path, "actor Main\n  new create(e: Env) =>\n    e.out.pri\n", opt);
-	if (package_load(prog, stringtab("builtin"), opt) == nullptr || package_load(prog, path, opt) == nullptr) {
-		ast_free(prog);
-		return nullptr;
-	}
-
-	// reorder, so specified comes first
-	ast_t *builtin = ast_pop(prog);
-	ast_append(prog, builtin);
-
-	// only do necessary subpasses so the ast doesnt get frozen
-	if (!ast_passes_subtree(&prog, opt, PASS_REFER)) {
-		ast_free(prog);
-		return nullptr;
-	}
-
-	return prog;
-}
- */
 
 std::vector<const char *> get_source_files_in(const char *dir_path, pass_opt_t *opt) {
 	fs::path path(dir_path);

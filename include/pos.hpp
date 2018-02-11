@@ -1,7 +1,7 @@
 #pragma once
 
 #include <iostream>
-#include <ponyc.h>
+#include "ponyc_includes.hpp"
 
 typedef struct pos_t {
 	size_t line;

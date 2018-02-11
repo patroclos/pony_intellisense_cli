@@ -2,9 +2,22 @@
 #include "dump_scope.hpp"
 #include "pos.hpp"
 #include "ast_transformations.hpp"
+
+// protobuf
+#include "scope.pb.h"
+
 #include <cstring>
 #include <map>
 #include <functional>
+
+extern "C" {
+bool valid_reference(pass_opt_t *opt, ast_t *ref, sym_status_t status);
+}
+
+#define LOG(msg, ...) { fprintf(stderr, "in %s (%s:%u):\n", __func__, __FILE__, __LINE__); fprintf(stderr, msg, __VA_ARGS__); fprintf(stderr, "\n"); }
+#define LOG_AST(ast) { LOG("Dumping AST %p:", ast); ast_fprint(stderr, ast, 40); }
+
+using namespace std;
 
 
 void _dump_scope(cli_opts_t options);
@@ -16,6 +29,7 @@ void dump_scope(cli_opts_t options) {
 	//collect_types(options);
 }
 
+/*
 void collect_types(cli_opts_t &options) {
 	auto pre = [](ast_t **astp, pass_opt_t *opt) {
 		pony_assert(astp != nullptr);
@@ -69,11 +83,7 @@ void collect_types(cli_opts_t &options) {
 	options.pass_opt.data = old;
 
 	printf("Collected %zu types\n", typeMembers.size());
-	/*
-	for (auto it = typeMembers.begin(); it != typeMembers.end(); it++)
-		for (auto mit = it->second.begin(); mit != it->second.end(); mit++)
-			printf("%s.%s\n", it->first, ast_name(ast_childidx(*mit, 1)));
-			*/}
+	}
 
 typedef struct type_info_t {
 	ast_t *ast_node;
@@ -140,6 +150,7 @@ symbol_info_t get_symbol_info(symbol_t *symbol) {
 
 	return data;
 }
+ */
 
 void __dump_scope(cli_opts_t options) {
 	ast_t *prog = options.program;
@@ -159,19 +170,10 @@ void __dump_scope(cli_opts_t options) {
 	ast_visit(&prog, nullptr, post, opt, PASS_ALL);
 }
 
-ast_result_t scope_print(ast_t **pAst, pass_opt_t *pass) {
-	printf("%s\n", token_id_desc(ast_id(*pAst)));
-	return AST_OK;
-};
-
-
 bool is_reference_token(token_id id) {
 	return id >= TK_REFERENCE && id < TK_DONTCAREREF;
 }
 
-extern "C" {
-bool valid_reference(pass_opt_t *opt, ast_t *ref, sym_status_t status);
-}
 
 ast_t *resolve_reference(ast_t *ref, pass_opt_t *opt) {
 	pony_assert(ref != nullptr);
@@ -182,16 +184,64 @@ ast_t *resolve_reference(ast_t *ref, pass_opt_t *opt) {
 	sym_status_t status;
 	ast_t *def = ast_get(id, ast_name(id), &status);
 
-	if (!valid_reference(opt, def, status))
+	/*
+	if ((status != SYM_DEFINED && status != SYM_CONSUMED && status != SYM_UNDEFINED) || !valid_reference(opt, def, status))
 		return nullptr;
+	 */
 	return def;
+}
+
+ast_t *resolve_call(ast_t *ref, pass_opt_t *opt) {
+	// TODO
+	pony_assert(ref != nullptr);
+
+	ast_t *fun = resolve_reference(ast_child(ref), opt);
+	LOG("Call resolved: %p", fun);
+
+	return fun;
+}
+
+ast_t *resolve_nominal(ast_t *nominal, pass_opt_t *opt) {
+	pony_assert(nominal != nullptr);
+	pony_assert(ast_id(nominal) == TK_NOMINAL);
+
+	auto *type = (ast_t *) ast_data(nominal);
+
+	return type;
+}
+
+vector<ast_t *> get_nominal_members(ast_t *nominal) {
+	pony_assert(nominal != nullptr);
+	pony_assert(ast_id(nominal) == TK_NOMINAL);
+
+	vector<ast_t *> member_vec;
+
+	AST_GET_CHILDREN(nominal, package_id, type_id, typeparams, cap, eph);
+	auto *type = (ast_t *) ast_data(nominal);
+
+	if (type == nullptr)
+		return member_vec;
+
+	AST_GET_CHILDREN(type, _, __, ___, ____, members);
+	for (ast_t *member = ast_child(members); member != nullptr; member = ast_sibling(member))
+		member_vec.push_back(member);
+
+	return member_vec;
+}
+
+ast_t *get_first_child_of(ast_t *parent, token_id id) {
+	for (ast_t *ast = ast_child(parent); ast != nullptr; ast = ast_sibling(ast))
+		if (ast_id(ast) == id)
+			return ast;
+	return nullptr;
 }
 
 /**
  * Evaluates the left part of a dot node recursively
  * @param dot or ref
+ * @return type,member or other underlying node described by left.right
  */
-ast_t *resolve_left(ast_t *dot, pass_opt_t *opt) {
+ast_t *resolve_dot(ast_t *dot, pass_opt_t *opt) {
 	if (dot == nullptr)
 		return nullptr;
 
@@ -205,7 +255,29 @@ ast_t *resolve_left(ast_t *dot, pass_opt_t *opt) {
 	token_id left_id = ast_id(left);
 
 	if (left_id == TK_DOT) {
-		ast_t *prior = resolve_left(left, opt);
+		ast_t *prior = nullptr;
+
+		switch (ast_id(left)) {
+			case TK_DOT:
+				prior = resolve_dot(left, opt);
+				break;
+			case TK_CALL:
+				ast_t *call_fun = resolve_call(left, opt);
+				fprintf(stderr, "Nominal resolved");
+				ast_fprint(stderr, call_fun, 40);
+				if (call_fun != nullptr) {
+					prior = resolve_nominal(get_first_child_of(call_fun, TK_NOMINAL), opt);
+				}
+				exit(0);
+				if (prior == nullptr)
+					break;
+				prior = get_first_child_of(prior, TK_NOMINAL);
+				if (prior == nullptr)
+					break;
+				prior = resolve_nominal(prior, opt);
+				break;
+		}
+
 		if (prior == nullptr)
 			return nullptr;
 
@@ -227,141 +299,61 @@ ast_t *resolve_left(ast_t *dot, pass_opt_t *opt) {
 		ast_t *ref = resolve_reference(left, opt);
 
 		ast_t *nominal = ast_childidx(ref, 1);
-		if (nominal == nullptr)
-			return nullptr;
+		for (auto &it : get_nominal_members(nominal)) {
+			auto member_id = get_first_child_of(it, TK_ID);
+			if (member_id == nullptr || ast_name(member_id) != ast_name(right))
+				continue;
 
-		AST_GET_CHILDREN(nominal, package_id, type_id, typeparams, cap, eph);
-		auto *type = (ast_t *) ast_data(nominal);
-
-		if (type == nullptr)
-			return nullptr;
-
-		AST_GET_CHILDREN(type, _, __, ___, ____, type_members)
-		for (ast_t *member = ast_child(type_members); member != nullptr; member = ast_sibling(member)) {
-			ast_t *member_id = ast_child(member);
-			while (member_id != nullptr && ast_id(member_id) != TK_ID)
-				member_id = ast_sibling(member_id);
-
-			if (member_id != nullptr && ast_name(member_id) == ast_name(right)) {
-				fprintf(stderr, "matched %s\n", ast_name(member_id));
-				nominal = ast_nominal_child(member);
-				if (nominal == nullptr)
-					return nullptr;
-				return (ast_t *) ast_data(nominal);
-			}
+			return (ast_t *) ast_data(get_first_child_of(it, TK_NOMINAL));
 		}
 	}
 
 	return nullptr;
 }
 
+ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
+	pony_assert(ast != nullptr);
+
+	LOG("resolving %s\n", token_id_desc(ast_id(ast)));
+
+	token_id id = ast_id(ast);
+	if (is_reference_token(id)) {
+		return resolve_reference(ast, pass_opt);
+	}
+
+	switch (ast_id(ast)) {
+		case TK_DOT:
+			return resolve_dot(ast, pass_opt);
+		case TK_CALL: LOG("Is TK_CALL", "");
+			return resolve_call(ast, pass_opt);
+		default:
+			return nullptr;
+	}
+}
+
+struct scope_pass_data_t {
+	cli_opts_t options;
+	Scope scope_msg;
+};
+
+static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt);
+
 void _dump_scope(cli_opts_t options) {
 	ast_t *ast = ast_child(options.program);
 	pass_opt_t *opt = &options.pass_opt;
+	scope_pass_data_t scope_pass_data;
+	scope_pass_data.options = options;
+	scope_pass_data.scope_msg = Scope();
 
 
-	auto first = [](ast_t **pAst, pass_opt_t *opt) {
-		source_t *source = ast_source(*pAst);
-		if (source == nullptr)
-			return AST_OK;
-		pos_t pos(ast_line(*pAst), ast_pos(*pAst));
+	{
+		const auto guard = pass_opt_data_guard(&options.pass_opt, &scope_pass_data);
+		ast_visit(&ast, nullptr, scope_pass, opt, PASS_ALL);
+	}
 
-		auto *options = static_cast<cli_opts_t *>(opt->data);
-
-		if (options->line > 0 && pos.line != options->line)
-			return AST_OK;
-
-		// member completion
-		if (ast_id(*pAst) == TK_DOT || ast_id(*pAst) == TK_TILDE) {
-			AST_GET_CHILDREN(*pAst, dot_left, dot_right);
-
-			// check if right is at caret
-			pos_t cursor_pos = pos_t(options->line, options->pos);
-			pos_t right_pos = pos_t(pos.line, pos.column);
-			fprintf(stderr, "right type: %s right len: %zu right pos: %zu\n", token_id_desc(ast_id(dot_right)),
-			        ast_name_len(dot_right), right_pos.column);
-			if (!in_range(cursor_pos, right_pos, ast_name_len(dot_right)))
-				return AST_OK;
-
-			bool is_ref = is_reference_token(ast_id(dot_left));
-			ast_t *resolved = is_ref ? resolve_reference(dot_left, opt) : resolve_left(dot_left, opt);
-
-			if (resolved == nullptr)
-				return AST_OK;
-
-			fprintf(stderr, "isref: %u ; resolved_type: %s\n\n", is_ref, token_id_desc(ast_id(resolved)));
-
-			ast_t *type;
-			if (is_ref) {
-				ast_t *nominal = ast_childidx(resolved, 1);
-				if (nominal == nullptr)
-					return AST_OK;
-
-				AST_GET_CHILDREN(nominal, package_id, type_id, typeparams, cap, eph);
-				type = (ast_t *) ast_data(nominal);
-			} else type = resolved;
-
-			AST_GET_CHILDREN(type, _, __, ___, ____, members);
-			for (ast_t *member = ast_child(members); member != nullptr; member = ast_sibling(member)) {
-				ast_t *id = ast_child(member);
-				while (id != nullptr && ast_id(id) != TK_ID)
-					id = ast_sibling(id);
-				if (ast_id(id) != TK_ID || ast_name(id)[0] == '_')
-					continue;
-
-				const char *name = ast_name(id);
-				const char *kind = ast_print_type(member);
-
-				printf("%s:%s\n", name, kind);
-				fprintf(stderr, "%s:%s\n", name, kind);
-
-				// ignore let,var etc on partial application
-				if (ast_id(*pAst) == TK_TILDE && kind != stringtab("fun") && kind != stringtab("be") &&
-				    kind != stringtab("new"))
-					continue;
-
-			}
-			/*
-			sym_status_t status;
-			ast_fprint(stderr, *pAst, 40);
-
-			const char *left_name = ast_name(ast_child(dot_left));
-			ast_t *def_left = ast_get(*pAst, ast_name(ast_child(dot_left)), &status);
-			if (def_left != nullptr) {
-				ast_t *nominal = ast_childidx(def_left, 1);
-				AST_GET_CHILDREN(nominal, package_id, type_id, typeparams, cap, eph)
-
-				ast_t *type = ast_get(*pAst, ast_name(type_id), &status);
-				AST_GET_CHILDREN(type, _, __, ___, ____, members)
-
-				for (ast_t *member = ast_child(members); member != nullptr; member = ast_sibling(member)) {
-					ast_t *id = ast_child(member);
-					while (id != nullptr && ast_id(id) != TK_ID)
-						id = ast_sibling(id);
-					if (ast_id(id) != TK_ID || ast_name(id)[0] == '_')
-						continue;
-
-					const char *name = ast_name(id);
-					const char *kind = ast_print_type(member);
-
-					// ignore let,var etc on partial application
-					if (ast_id(*pAst) == TK_TILDE && kind != stringtab("fun") && kind != stringtab("be") &&
-							kind != stringtab("new"))
-						continue;
-
-					printf("%s:%s\n", name, kind);
-				}
-			}
-			*/
-			//fprintf(stderr, "First: %s\nSecond: %s\n\n", token_id_desc(ast_id(a)), token_id_desc(ast_id(id)));
-			//printf("%p\n", opt->check.frame->method);
-			//ast_visit_scope(&opt->check.frame->method, nullptr, scope_print, opt, PASS_ALL);
-		}
-		return AST_OK;
-	};
-
-	opt->data = &options;
-	ast_visit(&ast, nullptr, first, opt, PASS_ALL);
+	std::ostream &msg_stream = std::cout;
+	scope_pass_data.scope_msg.SerializeToOstream(&msg_stream);
+	fprintf(stderr, "[*] Scope Message Stats\nNum Symbols: %i\n", scope_pass_data.scope_msg.symbols_size());
 
 	/*
 	ast_t *self = ast;
@@ -413,4 +405,87 @@ void _dump_scope(cli_opts_t options) {
 		}
 	}
 */
+}
+
+static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
+	source_t *source = ast_source(*pAst);
+	if (source == nullptr)
+		return AST_OK;
+	pos_t pos(ast_line(*pAst), ast_pos(*pAst));
+
+	auto scope_pass_data = static_cast<scope_pass_data_t *>(opt->data);
+	auto options = &scope_pass_data->options;
+
+	if (options->line > 0 && pos.line != options->line)
+		return AST_OK;
+
+	// member completion
+	if (ast_id(*pAst) == TK_DOT || ast_id(*pAst) == TK_TILDE) {
+		AST_GET_CHILDREN(*pAst, dot_left, dot_right);
+
+		// check if right is at caret
+		pos_t cursor_pos = pos_t(options->line, options->pos);
+		pos_t right_pos = pos_t(pos.line, pos.column);
+
+		size_t id_len = ast_id(dot_right) == TK_ID ? ast_name_len(dot_right) : 1;
+
+		if (!in_range(cursor_pos, right_pos, id_len))
+			return AST_OK;
+
+		ast_t *resolved = resolve(dot_left, opt);//is_ref ? resolve_reference(dot_left, opt) : resolve_dot(dot_left, opt);
+
+		if (resolved == nullptr)
+			return AST_OK;
+
+
+		ast_t *type = nullptr;
+
+		// check if resolved has a members node, if not, try to resolve the type from a nominal
+		{
+			ast_t *members = get_first_child_of(resolved, TK_MEMBERS);
+			if (members == nullptr) {
+				LOG("Resolved %p has no members, getting type from nominal", "");
+				ast_t *nominal = get_first_child_of(resolved, TK_NOMINAL);
+				if (nominal == nullptr)
+					return AST_OK;
+
+				type = (ast_t *) ast_data(nominal);
+			} else type = resolved;
+		}
+
+		AST_GET_CHILDREN(type, _, __, ___, ____, members);
+		for (ast_t *member = ast_child(members); member != nullptr; member = ast_sibling(member)) {
+			ast_t *id = ast_child(member);
+			while (id != nullptr && ast_id(id) != TK_ID)
+				id = ast_sibling(id);
+			if (ast_id(id) != TK_ID || ast_name(id)[0] == '_')
+				continue;
+
+			const char *name = ast_name(id);
+			const char *kind = ast_print_type(member);
+
+			Symbol *symbol = scope_pass_data->scope_msg.add_symbols();
+			symbol->set_name(string(name));
+
+			symbol->set_cap(static_cast<RefCap>(ast_id(ast_child(member)) - TK_ISO));
+			if (name == stringtab("append"))
+				fprintf(stderr, "append cap: %s\n", token_id_desc(ast_id(ast_child(member))));
+
+			ast_t *docstr = ast_childidx(member, 7);
+			if (docstr != nullptr && ast_id(docstr) == TK_STRING)
+				symbol->set_docstring(ast_name(docstr));
+
+
+			SymbolKind kind_enum;
+			if (SymbolKind_Parse(kind, &kind_enum))
+				symbol->set_kind(kind_enum);
+
+			// ignore let,var etc on partial application
+			if (ast_id(*pAst) == TK_TILDE && kind != stringtab("fun") && kind != stringtab("be") &&
+			    kind != stringtab("new"))
+				continue;
+
+		}
+	}
+	return AST_OK;
 }

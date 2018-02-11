@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+enum SymbolKind {
+    let = 0;
+    var = 1;
+    flet = 2;
+    fun = 3;
+}
+
+enum RefCap {
+    iso = 0;
+    trn = 1;
+    ref = 2;
+    val = 3;
+    box = 4;
+    tag = 5;
+}
+
+message TypeInfo {
+    string name = 1;
+    string docstring = 2;
+    RefCap default_cap = 3;
+}
+
+message Symbol {
+    string name = 1;
+    string docstring = 2;
+    SymbolKind kind = 3;
+    RefCap cap = 4;
+    TypeInfo type = 5;
+}
+
+message Scope {
+    repeated Symbol symbols = 1;
+}

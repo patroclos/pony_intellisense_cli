@@ -1,20 +1,17 @@
 #include "ast_transformations.hpp"
 #include <algorithm>
 
-struct pass_opt_data_guard {
-	pass_opt_t *opt;
-	void *old;
+using namespace std;
 
-	pass_opt_data_guard(pass_opt_t *opt, void *newData) {
-		this->opt = opt;
-		this->old = opt->data;
-		opt->data = newData;
-	}
+pass_opt_data_guard::pass_opt_data_guard(pass_opt_t *opt, void *newData) {
+	this->options = opt;
+	this->old_data = opt->data;
+	opt->data = newData;
+}
 
-	~pass_opt_data_guard() {
-		opt->data = old;
-	}
-};
+pass_opt_data_guard::~pass_opt_data_guard() {
+	options->data = old_data;
+}
 
 struct seq_data {
 	source_t *source;
