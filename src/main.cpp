@@ -1,12 +1,14 @@
+#include "main.hpp"
 #include "ponyc_includes.hpp"
 #include "cli_opts.hpp"
 #include "dump_ast.hpp"
 #include "dump_scope.hpp"
-#include "main.hpp"
+#include "ast_transformations.hpp"
+#include "logging.hpp"
+#include "get_symbol.hpp"
 
 #include <scope.pb.h>
 
-#include <string>
 #include <cstring>
 #include <experimental/filesystem>
 #include <CLI11.hpp>
@@ -14,6 +16,11 @@
 namespace fs = std::experimental::filesystem;
 
 static std::vector<const char *> get_source_files_in(const char *dir_path, pass_opt_t *opt);
+
+#define CARET_OPT(cmd, opts) { \
+  (cmd)->add_option("--line", (opts).line, "line to inspect", false);\
+  (cmd)->add_option("--pos", (opts).pos, "position on line to inspect", false);\
+  }
 
 int main(int argc, char **argv) {
 	stringtab_init();
@@ -57,11 +64,20 @@ int main(int argc, char **argv) {
 
 	{
 		auto cmd = app.add_subcommand("dump-scope");
+		CARET_OPT(cmd, cli_opts);
 		cmd->set_callback([&]() {
 			dump_scope(cli_opts);
 		});
-		cmd->add_option("--line", cli_opts.line, "line to inspect", false);
-		cmd->add_option("--pos", cli_opts.pos, "position on line to inspect", false);
+
+		//cmd->add_option("--line", cli_opts.line, "line to inspect", false);
+		//cmd->add_option("--pos", cli_opts.pos, "position on line to inspect", false);
+	}
+
+	{
+		auto cmd = app.add_subcommand("get-symbol");
+		CARET_OPT(cmd, cli_opts);
+
+		cmd->set_callback([&]() { get_symbol_command(cli_opts); });
 	}
 
 	app.require_subcommand(1);
@@ -82,30 +98,31 @@ static bool parse_dir_files(ast_t *package, cli_opts_t options, pass_opt_t *pass
 
 	auto files = get_source_files_in(options.path.c_str(), pass);
 	for (auto &file : files) {
-		fs::path fullpath(options.path.c_str());
-		fullpath /= fs::path(file);
+		fs::path path(options.path.c_str());
+		path /= fs::path(file);
 
 		const char *err_msg = nullptr;
-		source_t *source = fullpath.string() == options.file && options.override_file_content != nullptr ? source_open_string(options.override_file_content)
-		                                                            : source_open(fullpath.string().c_str(), &err_msg);
+		bool source_is_stdin = path.string() == options.file && options.override_file_content != nullptr;
+		source_t *source = source_is_stdin ? source_open_string(options.override_file_content)
+		                                   : source_open(path.string().c_str(), &err_msg);
 
 		if (source == nullptr) {
 			if (err_msg == nullptr)
 				err_msg = "couldn't open file";
 
-			errorf(pass->check.errors, file, "%s %s", file);
+			errorf(pass->check.errors, file, "%s", file);
 			return false;
 		}
 
-		source->file = stringtab(options.file.c_str());
+		if (source_is_stdin)
+			source->file = stringtab(options.file.c_str());
 		rv &= module_passes(package, pass, source);
-		//rv &= parse_source_file(package, fullpath.string().c_str(), pass);
 	}
 
 	return rv;
 }
 
-static ast_t *load_package_custom(ast_t *from, cli_opts_t options, pass_opt_t *pass) {
+static ast_t *load_package_custom(ast_t *from, cli_opts_t &options, pass_opt_t *pass) {
 	pony_assert(from != nullptr);
 
 	bool is_relative = false;
@@ -127,7 +144,7 @@ static ast_t *load_package_custom(ast_t *from, cli_opts_t options, pass_opt_t *p
 			size_t path_len = options.path.size();
 			size_t len = base_name_len + path_len + 2;
 
-			char *q_name = (char *) ponyint_pool_alloc_size(len);
+			auto *q_name = (char *) ponyint_pool_alloc_size(len);
 			memcpy(q_name, base_name, base_name_len);
 			q_name[base_name_len] = '/';
 			memcpy(q_name + base_name_len + 1, options.path.c_str(), path_len);
@@ -162,7 +179,7 @@ static ast_t *load_package_custom(ast_t *from, cli_opts_t options, pass_opt_t *p
 	return package;
 }
 
-bool load_program_from_options(cli_opts_t options, pass_opt_t &pass, ast_t *&program) {
+bool load_program_from_options(cli_opts_t &options, pass_opt_t &pass, ast_t *&program) {
 	pass_opt_init(&pass);
 	pass.release = false;
 	pass.print_stats = true;
@@ -206,7 +223,7 @@ bool load_program_from_options(cli_opts_t options, pass_opt_t &pass, ast_t *&pro
 	return true;
 }
 
-std::vector<const char *> get_source_files_in(const char *dir_path, pass_opt_t *opt) {
+std::vector<const char *> get_source_files_in(const char *dir_path, pass_opt_t *) {
 	fs::path path(dir_path);
 	std::vector<const char *> rv;
 

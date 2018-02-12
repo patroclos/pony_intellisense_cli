@@ -6,4 +6,4 @@
 
 #include "cli_opts.hpp"
 
-void dump_scope(cli_opts_t options);
+void dump_scope(cli_opts_t &options);

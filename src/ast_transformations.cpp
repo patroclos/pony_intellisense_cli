@@ -1,5 +1,7 @@
 #include "ast_transformations.hpp"
 #include <algorithm>
+#include <cstring>
+#include <logging.hpp>
 
 using namespace std;
 
@@ -14,20 +16,10 @@ pass_opt_data_guard::~pass_opt_data_guard() {
 }
 
 struct seq_data {
-	source_t *source;
+	const char *file;
 	vector<ast_t *> nodes;
 };
 
-// only select
-static ast_result_t visit_seq_pre(ast_t **pAst, pass_opt_t *opt) {
-	pony_assert(pAst != nullptr);
-	pony_assert(*pAst != nullptr);
-
-	auto data = static_cast<seq_data *>(opt->data);
-
-	return AST_OK;
-	//return (ast_source(*pAst) == data->source) ? AST_OK : AST_IGNORE;
-}
 
 static ast_result_t visit_seq_post(ast_t **pAst, pass_opt_t *opt) {
 	pony_assert(pAst != nullptr);
@@ -36,17 +28,19 @@ static ast_result_t visit_seq_post(ast_t **pAst, pass_opt_t *opt) {
 	//if (ast_id(*pAst) >= TK_PROGRAM || ast_line(*pAst) != 6)
 
 	auto data = static_cast<seq_data *>(opt->data);
-	data->nodes.push_back(*pAst);
+	if (ast_source(*pAst) != nullptr && ast_source(*pAst)->file == data->file)
+		data->nodes.push_back(*pAst);
 
 	return AST_OK;
 }
 
-vector<ast_t *> ordered_sequence(ast_t *package, source_t *source, pass_opt_t *opt) {
-	auto data = seq_data();
-	data.source = source;
+vector<ast_t *> tree_to_sourceloc_ordered_sequence(ast_t *tree, pass_opt_t *opt, const char *file) {
+	seq_data data;
+	data.file = stringtab(file);
 	pass_opt_data_guard data_guard(opt, &data);
 
-	ast_visit(&package, visit_seq_pre, visit_seq_post, opt, PASS_ALL);
+	ast_visit(&tree, nullptr, visit_seq_post, opt, PASS_ALL);
+	LOG("Got %zu nodes in sequence", data.nodes.size());
 
 	sort(data.nodes.begin(), data.nodes.end(),
 	     [](ast_t *a, ast_t *b) {
@@ -58,4 +52,27 @@ vector<ast_t *> ordered_sequence(ast_t *package, source_t *source, pass_opt_t *o
 	     });
 
 	return data.nodes;
+}
+
+ast_t *find_identifier_at(ast_t *tree, pass_opt_t *opt, caret_t const &position, string const &sourcefile) {
+	auto sequence = tree_to_sourceloc_ordered_sequence(tree, opt, stringtab(sourcefile.c_str()));
+
+	for (auto &node : sequence) {
+		if (ast_id(node) != TK_ID)
+			continue;
+
+		source_t *source = ast_source(node);
+
+		if (source == nullptr || source->file == nullptr || strcmp(source->file, sourcefile.c_str()) != 0)
+			continue;
+
+		caret_t node_loc(ast_line(node), ast_pos(node));
+
+		if (position.in_range(node_loc, ast_name_len(node))) {
+			LOG("Matched in file %s:%zu,%zu (%s)\n", source->file, node_loc.line, node_loc.column, ast_name(node));
+			return node;
+		}
+	}
+
+	return nullptr;
 }

@@ -18,15 +18,13 @@ set(PROTOBUF_SRC_ROOT_FOLDER ${CMAKE_SOURCE_DIR}/protocols)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 PROTOBUF_GENERATE_CPP(PROTO_SRCS PROTO_HDRS protocols/scope.proto)
 
-message(AUTHOR_WARNING ${PROTO_SRCS})
-
 add_executable(ponylang_llvm_tester
         src/main.cpp
         src/pos.cpp
         src/dump_ast.cpp
         src/dump_scope.cpp
         src/ast_transformations.cpp
-        ${PROTO_SRCS})
+        ${PROTO_SRCS} include/logging.hpp src/get_symbol.cpp src/get_symbol.hpp)
 
 target_link_libraries(ponylang_llvm_tester ${PROTOBUF_LIBRARIES})
 #target_link_libraries(ponylang_llvm_tester pthread ponyc ponyrt dl atomic LLVM-4.0 m blake2)

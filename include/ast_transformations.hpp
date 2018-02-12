@@ -1,9 +1,13 @@
 #pragma once
 
 #include "ponyc_includes.hpp"
+#include "pos.hpp"
 
 #include <vector>
 
+/**
+ * @brief for changing pass_opt_t->data temporarily in a scope
+ */
 struct pass_opt_data_guard {
 	pass_opt_t *options;
 	void *old_data;
@@ -12,4 +16,10 @@ struct pass_opt_data_guard {
 	~pass_opt_data_guard();
 };
 
-std::vector<ast_t *> ordered_sequence(ast_t *package, source_t *source, pass_opt_t *options);
+/**
+ * @return ast nodes ordered by source location
+ */
+std::vector<ast_t *> tree_to_sourceloc_ordered_sequence(ast_t *tree, pass_opt_t *options, const char *file);
+
+ast_t *find_identifier_at(ast_t *tree, pass_opt_t *opt, caret_t const &position, std::string const &sourcefile);
+

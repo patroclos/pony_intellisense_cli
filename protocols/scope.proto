@@ -1,5 +1,6 @@
 syntax = "proto3";
 
+// type of symbol (eg. let, var, flet, fun, be...)
 enum SymbolKind {
     let = 0;
     var = 1;
@@ -7,6 +8,7 @@ enum SymbolKind {
     fun = 3;
 }
 
+// pony reference capabilities
 enum RefCap {
     iso = 0;
     trn = 1;
@@ -22,12 +24,19 @@ message TypeInfo {
     RefCap default_cap = 3;
 }
 
+message SourceLocation {
+    string file = 1;
+    int32 line = 2;
+    int32 column = 3;
+}
+
 message Symbol {
     string name = 1;
     string docstring = 2;
     SymbolKind kind = 3;
     RefCap cap = 4;
     TypeInfo type = 5;
+    SourceLocation definition_location = 6;
 }
 
 message Scope {

@@ -2,31 +2,26 @@
 #include "dump_scope.hpp"
 #include "pos.hpp"
 #include "ast_transformations.hpp"
+#include "logging.hpp"
 
 // protobuf
 #include "scope.pb.h"
 
 #include <cstring>
-#include <map>
 #include <functional>
 
 extern "C" {
 bool valid_reference(pass_opt_t *opt, ast_t *ref, sym_status_t status);
 }
 
-#define LOG(msg, ...) { fprintf(stderr, "in %s (%s:%u):\n", __func__, __FILE__, __LINE__); fprintf(stderr, msg, ##__VA_ARGS__); fprintf(stderr, "\n"); }
-#define LOG_AST(ast) { LOG("Dumping AST %p:", ast); ast_fprint(stderr, ast, 40); }
 
 using namespace std;
 
 
-void _dump_scope(cli_opts_t options);
+void _dump_scope(cli_opts_t &options);
 
-void collect_types(cli_opts_t &options);
-
-void dump_scope(cli_opts_t options) {
+void dump_scope(cli_opts_t &options) {
 	_dump_scope(options);
-	//collect_types(options);
 }
 
 /*
@@ -184,19 +179,18 @@ bool is_reference_token(token_id id) {
 
 ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt);
 
-ast_t *resolve_reference(ast_t *ref, pass_opt_t *opt) {
+ast_t *resolve_reference(ast_t *ref, pass_opt_t*) {
 	pony_assert(ref != nullptr);
 	assert(is_reference_token(ast_id(ref)));
 
 	ast_t *id = ast_child(ref);
 
 	sym_status_t status;
-	ast_t *def = ast_get(id, ast_name(id), &status);
+	return ast_get(id, ast_name(id), &status);
 	/*
 	if ((status != SYM_DEFINED && status != SYM_CONSUMED && status != SYM_UNDEFINED) || !valid_reference(opt, def, status))
 		return nullptr;
 	 */
-	return def;
 }
 
 ast_t *resolve_call(ast_t *call, pass_opt_t *opt) {
@@ -206,7 +200,7 @@ ast_t *resolve_call(ast_t *call, pass_opt_t *opt) {
 	return resolve(ast_child(call), opt);
 }
 
-ast_t *resolve_nominal(ast_t *nominal, pass_opt_t *opt) {
+ast_t *resolve_nominal(ast_t *nominal, pass_opt_t*) {
 	pony_assert(nominal != nullptr);
 	pony_assert(ast_id(nominal) == TK_NOMINAL);
 
@@ -235,10 +229,11 @@ ast_t *resolve_dot(ast_t *dot, pass_opt_t *opt) {
 		ast_t *prior = nullptr;
 
 		switch (ast_id(left)) {
-			case TK_DOT:
+			case TK_DOT: {
 				prior = resolve_dot(left, opt);
 				break;
-			case TK_CALL:
+			}
+			case TK_CALL: {
 				ast_t *call_fun = resolve_call(left, opt);
 				LOG("resolved fun: %p\n", call_fun);
 
@@ -246,6 +241,8 @@ ast_t *resolve_dot(ast_t *dot, pass_opt_t *opt) {
 					prior = resolve_nominal(get_first_child_of(call_fun, TK_NOMINAL), opt);
 				}
 				break;
+			}
+			default: { }
 		}
 
 		if (prior == nullptr)
@@ -319,11 +316,10 @@ ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 		default: {
 			LOG("Tried to resolve unhandled ast type %s\n", token_id_desc(ast_id(ast)));
 			LOG_AST(ast);
-			pony_assert(0);
+			pony_assert(false);
 			return nullptr;
 		}
 	}
-	return nullptr;
 }
 
 struct scope_pass_data_t {
@@ -333,7 +329,7 @@ struct scope_pass_data_t {
 
 static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt);
 
-void _dump_scope(cli_opts_t options) {
+void _dump_scope(cli_opts_t &options) {
 	ast_t *ast = ast_child(options.program);
 	pass_opt_t *opt = &options.pass_opt;
 	scope_pass_data_t scope_pass_data;
@@ -363,7 +359,7 @@ void _dump_scope(cli_opts_t options) {
 		if (src == nullptr)// || src->file == nullptr)
 			continue;
 
-		auto pos = pos_t(ast_line(ast), ast_pos(ast));
+		auto pos = caret_t(ast_line(ast), ast_pos(ast));
 
 		// skip different files then the specified one
 		if (options.file.length() != 0 && options.file != src->file)
@@ -406,7 +402,7 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 	source_t *source = ast_source(*pAst);
 	if (source == nullptr)
 		return AST_OK;
-	pos_t pos(ast_line(*pAst), ast_pos(*pAst));
+	caret_t pos(ast_line(*pAst), ast_pos(*pAst));
 
 	auto scope_pass_data = static_cast<scope_pass_data_t *>(opt->data);
 	auto options = &scope_pass_data->options;
@@ -419,12 +415,12 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 		AST_GET_CHILDREN(*pAst, dot_left, dot_right);
 
 		// check if right is at caret
-		pos_t cursor_pos = pos_t(options->line, options->pos);
-		pos_t right_pos = pos_t(pos.line, pos.column);
+		caret_t cursor_pos = caret_t(options->line, options->pos);
+		caret_t right_pos = caret_t(pos.line, pos.column);
 
 		size_t id_len = ast_id(dot_right) == TK_ID ? ast_name_len(dot_right) : 1;
 
-		if (!in_range(cursor_pos, right_pos, id_len))
+		if (!cursor_pos.in_range(right_pos, id_len))
 			return AST_OK;
 
 		ast_t *resolved = resolve(dot_left, opt);

@@ -18,7 +18,7 @@ extern "C" {
 
 #include "pos.hpp"
 
-pos_t token_pos(token_t *tok);
+caret_t token_pos(token_t *tok);
 
 int main(int argc, char **argv) {
 	const char *error = nullptr;
@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
 		return 2;
 	}
 
-	pos_t cursor(2, 6);
+	caret_t cursor(2, 6);
 	printf("cursor: %u,%u\n", cursor.line, cursor.column);
 
 	while (true) {
@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
 
 		ast_t *ast = ast_token(tok);
 
-		pos_t current_pos = token_pos(tok);
+		caret_t current_pos = token_pos(tok);
 
 		printf("current: %u,%u\n", current_pos.line, current_pos.column);
 

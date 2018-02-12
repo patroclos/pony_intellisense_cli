@@ -3,17 +3,13 @@
 #include <iostream>
 #include "ponyc_includes.hpp"
 
-typedef struct pos_t {
+typedef struct caret_t {
 	size_t line;
 	size_t column;
 
-	pos_t(size_t line, size_t column) {
-		this->line = line;
-		this->column = column;
-	}
+	caret_t(size_t line, size_t column);
+	bool in_range(caret_t start, size_t len) const;
+} caret_t;
 
-} pos_t;
 
-bool in_range(pos_t pos, pos_t start, size_t len);
-
-pos_t token_pos(token_t *tok);
+caret_t token_pos(token_t *tok);
