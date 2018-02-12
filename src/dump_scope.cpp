@@ -14,7 +14,7 @@ extern "C" {
 bool valid_reference(pass_opt_t *opt, ast_t *ref, sym_status_t status);
 }
 
-#define LOG(msg, ...) { fprintf(stderr, "in %s (%s:%u):\n", __func__, __FILE__, __LINE__); fprintf(stderr, msg, __VA_ARGS__); fprintf(stderr, "\n"); }
+#define LOG(msg, ...) { fprintf(stderr, "in %s (%s:%u):\n", __func__, __FILE__, __LINE__); fprintf(stderr, msg, ##__VA_ARGS__); fprintf(stderr, "\n"); }
 #define LOG_AST(ast) { LOG("Dumping AST %p:", ast); ast_fprint(stderr, ast, 40); }
 
 using namespace std;
@@ -152,64 +152,6 @@ symbol_info_t get_symbol_info(symbol_t *symbol) {
 }
  */
 
-void __dump_scope(cli_opts_t options) {
-	ast_t *prog = options.program;
-	ast_t *pkg = ast_child(prog);
-	pass_opt_t *opt = &options.pass_opt;
-
-	auto post = [](ast_t **pAst, pass_opt_t *opt) {
-		if (ast_id(*pAst) == TK_NOMINAL) {
-			ast_fprint(stderr, ast_parent(*pAst), 40);
-			AST_GET_CHILDREN(*pAst, package_id, type_id, typeparams, cap, eph);
-
-			printf("%s\n", ast_name(type_id));
-		}
-		return AST_OK;
-	};
-
-	ast_visit(&prog, nullptr, post, opt, PASS_ALL);
-}
-
-bool is_reference_token(token_id id) {
-	return id >= TK_REFERENCE && id < TK_DONTCAREREF;
-}
-
-
-ast_t *resolve_reference(ast_t *ref, pass_opt_t *opt) {
-	pony_assert(ref != nullptr);
-	pony_assert(is_reference_token(ast_id(ref)));
-
-	ast_t *id = ast_child(ref);
-
-	sym_status_t status;
-	ast_t *def = ast_get(id, ast_name(id), &status);
-
-	/*
-	if ((status != SYM_DEFINED && status != SYM_CONSUMED && status != SYM_UNDEFINED) || !valid_reference(opt, def, status))
-		return nullptr;
-	 */
-	return def;
-}
-
-ast_t *resolve_call(ast_t *ref, pass_opt_t *opt) {
-	// TODO
-	pony_assert(ref != nullptr);
-
-	ast_t *fun = resolve_reference(ast_child(ref), opt);
-	LOG("Call resolved: %p", fun);
-
-	return fun;
-}
-
-ast_t *resolve_nominal(ast_t *nominal, pass_opt_t *opt) {
-	pony_assert(nominal != nullptr);
-	pony_assert(ast_id(nominal) == TK_NOMINAL);
-
-	auto *type = (ast_t *) ast_data(nominal);
-
-	return type;
-}
-
 vector<ast_t *> get_nominal_members(ast_t *nominal) {
 	pony_assert(nominal != nullptr);
 	pony_assert(ast_id(nominal) == TK_NOMINAL);
@@ -234,6 +176,45 @@ ast_t *get_first_child_of(ast_t *parent, token_id id) {
 		if (ast_id(ast) == id)
 			return ast;
 	return nullptr;
+}
+
+bool is_reference_token(token_id id) {
+	return id >= TK_REFERENCE && id < TK_DONTCAREREF;
+}
+
+ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt);
+
+ast_t *resolve_reference(ast_t *ref, pass_opt_t *opt) {
+	pony_assert(ref != nullptr);
+	assert(is_reference_token(ast_id(ref)));
+
+	ast_t *id = ast_child(ref);
+
+	sym_status_t status;
+	ast_t *def = ast_get(id, ast_name(id), &status);
+
+	LOG("Got def: %p", def);
+	LOG_AST(def);
+
+	/*
+	if ((status != SYM_DEFINED && status != SYM_CONSUMED && status != SYM_UNDEFINED) || !valid_reference(opt, def, status))
+		return nullptr;
+	 */
+	return def;
+}
+
+ast_t *resolve_call(ast_t *call, pass_opt_t *opt) {
+	pony_assert(call != nullptr);
+	pony_assert(ast_id(call) == TK_CALL);
+
+	return resolve(ast_child(call), opt);
+}
+
+ast_t *resolve_nominal(ast_t *nominal, pass_opt_t *opt) {
+	pony_assert(nominal != nullptr);
+	pony_assert(ast_id(nominal) == TK_NOMINAL);
+
+	return (ast_t *) ast_data(nominal);
 }
 
 /**
@@ -263,18 +244,11 @@ ast_t *resolve_dot(ast_t *dot, pass_opt_t *opt) {
 				break;
 			case TK_CALL:
 				ast_t *call_fun = resolve_call(left, opt);
-				fprintf(stderr, "Nominal resolved");
-				ast_fprint(stderr, call_fun, 40);
+				LOG("resolved fun: %p\n", call_fun);
+
 				if (call_fun != nullptr) {
 					prior = resolve_nominal(get_first_child_of(call_fun, TK_NOMINAL), opt);
 				}
-				exit(0);
-				if (prior == nullptr)
-					break;
-				prior = get_first_child_of(prior, TK_NOMINAL);
-				if (prior == nullptr)
-					break;
-				prior = resolve_nominal(prior, opt);
 				break;
 		}
 
@@ -321,14 +295,36 @@ ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 		return resolve_reference(ast, pass_opt);
 	}
 
+	// TODO handle array literals, strings, tuples etc
 	switch (ast_id(ast)) {
 		case TK_DOT:
 			return resolve_dot(ast, pass_opt);
-		case TK_CALL: LOG("Is TK_CALL", "");
+		case TK_CALL: LOG("Is TK_CALL");
 			return resolve_call(ast, pass_opt);
-		default:
+		case TK_VAR:
+		case TK_LET:
+		case TK_EMBED: {
+			ast_t *parent = ast_parent(ast);
+			if (parent == nullptr)
+				return nullptr;
+
+			ast_t *nominal = get_first_child_of(ast, TK_NOMINAL);
+			if (nominal != nullptr)
+				return resolve_nominal(nominal, pass_opt);
+
+			return resolve(ast_childidx(parent, 1), pass_opt);
+		}
+		case TK_FUN:
+		case TK_NEW:
+			return resolve_nominal(get_first_child_of(ast, TK_NOMINAL), pass_opt);
+		default:{
+			LOG("Tried to resolve unhandled ast type %s\n", token_id_desc(ast_id(ast)));
+			LOG_AST(ast);
+			pony_assert(0);
 			return nullptr;
+		}
 	}
+	return nullptr;
 }
 
 struct scope_pass_data_t {
@@ -432,19 +428,29 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 		if (!in_range(cursor_pos, right_pos, id_len))
 			return AST_OK;
 
-		ast_t *resolved = resolve(dot_left, opt);//is_ref ? resolve_reference(dot_left, opt) : resolve_dot(dot_left, opt);
+		ast_t *resolved = resolve(dot_left, opt);
+
+		if (resolved != nullptr) {
+			// check if resolved has a members node, if not, try to resolve the type from a nominal
+			LOG_AST(resolved);
+			while (resolved != nullptr && get_first_child_of(resolved, TK_MEMBERS) == nullptr) {
+				LOG("resolved is only a reference, going deeper");
+				resolved = resolve(resolved, opt);
+				if (resolved != nullptr) {
+					LOG_AST(resolved);
+				} else LOG("Failed resolving");
+			}
+		}
 
 		if (resolved == nullptr)
 			return AST_OK;
 
-
 		ast_t *type = nullptr;
 
-		// check if resolved has a members node, if not, try to resolve the type from a nominal
 		{
 			ast_t *members = get_first_child_of(resolved, TK_MEMBERS);
 			if (members == nullptr) {
-				LOG("Resolved %p has no members, getting type from nominal", "");
+				LOG("Resolved %p has no members, getting type from nominal", resolved);
 				ast_t *nominal = get_first_child_of(resolved, TK_NOMINAL);
 				if (nominal == nullptr)
 					return AST_OK;
@@ -468,17 +474,30 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 			symbol->set_name(string(name));
 
 			symbol->set_cap(static_cast<RefCap>(ast_id(ast_child(member)) - TK_ISO));
-			if (name == stringtab("append"))
-				fprintf(stderr, "append cap: %s\n", token_id_desc(ast_id(ast_child(member))));
 
 			ast_t *docstr = ast_childidx(member, 7);
 			if (docstr != nullptr && ast_id(docstr) == TK_STRING)
 				symbol->set_docstring(ast_name(docstr));
 
-
 			SymbolKind kind_enum;
 			if (SymbolKind_Parse(kind, &kind_enum))
 				symbol->set_kind(kind_enum);
+
+			LOG("Trying to get Type from member");
+			ast_t *member_type = resolve(member, opt);
+			if (member_type != nullptr) {
+				LOG("Found type of %s (%s)", name, ast_name(ast_child(member_type)));
+				TypeInfo *typeInfo = symbol->mutable_type();
+				typeInfo->set_name(ast_name(ast_child(member_type)));
+				typeInfo->set_default_cap(static_cast<RefCap>(ast_id(ast_childidx(member_type, 1)) - TK_ISO));
+
+				if(name==stringtab("size"))
+				LOG_AST(member_type);
+
+				docstr = ast_childlast(member_type);
+				if(ast_id(docstr) == TK_STRING)
+					typeInfo->set_docstring(ast_name(docstr));
+			}
 
 			// ignore let,var etc on partial application
 			if (ast_id(*pAst) == TK_TILDE && kind != stringtab("fun") && kind != stringtab("be") &&
