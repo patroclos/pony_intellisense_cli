@@ -192,10 +192,6 @@ ast_t *resolve_reference(ast_t *ref, pass_opt_t *opt) {
 
 	sym_status_t status;
 	ast_t *def = ast_get(id, ast_name(id), &status);
-
-	LOG("Got def: %p", def);
-	LOG_AST(def);
-
 	/*
 	if ((status != SYM_DEFINED && status != SYM_CONSUMED && status != SYM_UNDEFINED) || !valid_reference(opt, def, status))
 		return nullptr;
@@ -288,8 +284,6 @@ ast_t *resolve_dot(ast_t *dot, pass_opt_t *opt) {
 ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 	pony_assert(ast != nullptr);
 
-	LOG("resolving %s\n", token_id_desc(ast_id(ast)));
-
 	token_id id = ast_id(ast);
 	if (is_reference_token(id)) {
 		return resolve_reference(ast, pass_opt);
@@ -299,7 +293,7 @@ ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 	switch (ast_id(ast)) {
 		case TK_DOT:
 			return resolve_dot(ast, pass_opt);
-		case TK_CALL: LOG("Is TK_CALL");
+		case TK_CALL:
 			return resolve_call(ast, pass_opt);
 		case TK_VAR:
 		case TK_LET:
@@ -315,9 +309,14 @@ ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 			return resolve(ast_childidx(parent, 1), pass_opt);
 		}
 		case TK_FUN:
-		case TK_NEW:
-			return resolve_nominal(get_first_child_of(ast, TK_NOMINAL), pass_opt);
-		default:{
+		case TK_NEW: {
+			ast_t *nominal = get_first_child_of(ast, TK_NOMINAL);
+			if (nominal == nullptr) {
+				return nullptr;
+			}
+			return resolve_nominal(nominal, pass_opt);
+		}
+		default: {
 			LOG("Tried to resolve unhandled ast type %s\n", token_id_desc(ast_id(ast)));
 			LOG_AST(ast);
 			pony_assert(0);
@@ -432,13 +431,12 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 
 		if (resolved != nullptr) {
 			// check if resolved has a members node, if not, try to resolve the type from a nominal
-			LOG_AST(resolved);
 			while (resolved != nullptr && get_first_child_of(resolved, TK_MEMBERS) == nullptr) {
 				LOG("resolved is only a reference, going deeper");
 				resolved = resolve(resolved, opt);
-				if (resolved != nullptr) {
-					LOG_AST(resolved);
-				} else LOG("Failed resolving");
+				if (resolved == nullptr) {
+					LOG("Failed resolving");
+				}
 			}
 		}
 
@@ -483,19 +481,14 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 			if (SymbolKind_Parse(kind, &kind_enum))
 				symbol->set_kind(kind_enum);
 
-			LOG("Trying to get Type from member");
 			ast_t *member_type = resolve(member, opt);
 			if (member_type != nullptr) {
-				LOG("Found type of %s (%s)", name, ast_name(ast_child(member_type)));
 				TypeInfo *typeInfo = symbol->mutable_type();
 				typeInfo->set_name(ast_name(ast_child(member_type)));
 				typeInfo->set_default_cap(static_cast<RefCap>(ast_id(ast_childidx(member_type, 1)) - TK_ISO));
 
-				if(name==stringtab("size"))
-				LOG_AST(member_type);
-
 				docstr = ast_childlast(member_type);
-				if(ast_id(docstr) == TK_STRING)
+				if (ast_id(docstr) == TK_STRING)
 					typeInfo->set_docstring(ast_name(docstr));
 			}
 
