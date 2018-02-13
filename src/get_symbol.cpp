@@ -14,22 +14,22 @@ void get_symbol_command(cli_opts_t &cli_opts) {
 	if (id != nullptr) {
 		LOG_AST(id);
 		ast_t *def = ast_get(id, ast_name(id), nullptr);
-		
+
 		if (def == nullptr) return;
-		
+
 		source_t *source = ast_source(def);
-		
+
 		if (source == nullptr) return;
-		
+
 		LOG("Found definition at %s:%zu", source->file, ast_line(def));
 
 		Symbol symbol;
 		symbol.set_name(ast_name(id));
 		symbol.set_kind((SymbolKind) (ast_id(def) - TK_VAR));
-		auto sym_defloc = symbol.mutable_definition_location();
-		sym_defloc->set_file(source->file);
-		sym_defloc->set_line((int32_t) ast_line(def));
-		sym_defloc->set_column((int32_t) ast_pos(def));
+		auto definition_location = symbol.mutable_definition_location();
+		definition_location->set_file(source->file);
+		definition_location->set_line((int32_t) ast_line(def));
+		definition_location->set_column((int32_t) ast_pos(def));
 
 		std::ostream &msg_stream = std::cout;
 		symbol.SerializeToOstream(&msg_stream);

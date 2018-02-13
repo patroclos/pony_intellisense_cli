@@ -179,7 +179,7 @@ bool is_reference_token(token_id id) {
 
 ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt);
 
-ast_t *resolve_reference(ast_t *ref, pass_opt_t*) {
+ast_t *resolve_reference(ast_t *ref, pass_opt_t *) {
 	pony_assert(ref != nullptr);
 	assert(is_reference_token(ast_id(ref)));
 
@@ -200,7 +200,7 @@ ast_t *resolve_call(ast_t *call, pass_opt_t *opt) {
 	return resolve(ast_child(call), opt);
 }
 
-ast_t *resolve_nominal(ast_t *nominal, pass_opt_t*) {
+ast_t *resolve_nominal(ast_t *nominal, pass_opt_t *) {
 	pony_assert(nominal != nullptr);
 	pony_assert(ast_id(nominal) == TK_NOMINAL);
 
@@ -209,19 +209,22 @@ ast_t *resolve_nominal(ast_t *nominal, pass_opt_t*) {
 
 /**
  * Evaluates the left part of a dot node recursively
- * @param dot or ref
+ * @param accessor or ref
  * @return type,member or other underlying node described by left.right
  */
-ast_t *resolve_dot(ast_t *dot, pass_opt_t *opt) {
-	if (dot == nullptr)
+ast_t *resolve_member_access(ast_t *accessor, pass_opt_t *opt) {
+	if (accessor == nullptr)
 		return nullptr;
 
-	if (ast_childcount(dot) < 2)
+	LOG("Resolving %s", token_id_desc(ast_id(accessor)));
+
+	if (ast_childcount(accessor) < 2)
 		return nullptr;
 
-	AST_GET_CHILDREN(dot, left, right);
+	bool is_chaining = ast_id(accessor) == TK_CHAIN;
+	AST_GET_CHILDREN(accessor, left, right);
 
-	pony_assert(ast_id(right) == TK_ID);
+	pony_assert(ast_id(right) == TK_ID || ast_id(right) == TK_TILDE || ast_id(right) == TK_CHAIN);
 
 	token_id left_id = ast_id(left);
 
@@ -229,8 +232,10 @@ ast_t *resolve_dot(ast_t *dot, pass_opt_t *opt) {
 		ast_t *prior = nullptr;
 
 		switch (ast_id(left)) {
-			case TK_DOT: {
-				prior = resolve_dot(left, opt);
+			case TK_DOT:
+			case TK_TILDE:
+			case TK_CHAIN: {
+				prior = resolve_member_access(left, opt);
 				break;
 			}
 			case TK_CALL: {
@@ -242,11 +247,17 @@ ast_t *resolve_dot(ast_t *dot, pass_opt_t *opt) {
 				}
 				break;
 			}
-			default: { }
+			default: {
+			}
 		}
 
 		if (prior == nullptr)
 			return nullptr;
+
+		if (is_chaining) {
+			LOG("is_chaining short circuiting");
+			return prior;
+		}
 
 		AST_GET_CHILDREN(prior, _, __, ___, ____, prior_members)
 
@@ -265,7 +276,15 @@ ast_t *resolve_dot(ast_t *dot, pass_opt_t *opt) {
 	} else if (is_reference_token(left_id)) {
 		ast_t *ref = resolve_reference(left, opt);
 
+
 		ast_t *nominal = ast_childidx(ref, 1);
+
+		if (nominal == nullptr)
+			return nullptr;
+
+		if (is_chaining)
+			return (ast_t *) ast_data(nominal);
+
 		for (auto &it : get_nominal_members(nominal)) {
 			auto member_id = get_first_child_of(it, TK_ID);
 			if (member_id == nullptr || ast_name(member_id) != ast_name(right))
@@ -282,18 +301,42 @@ ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 	pony_assert(ast != nullptr);
 
 	token_id id = ast_id(ast);
+	LOG("Resolving %s", token_id_desc(ast_id(ast)));
 	if (is_reference_token(id)) {
 		return resolve_reference(ast, pass_opt);
 	}
 
 	// TODO handle array literals, strings, tuples etc
-	switch (ast_id(ast)) {
+	token_id tokenId = ast_id(ast);
+	switch (tokenId) {
+		case TK_STRING:
+		case TK_FLOAT:
+		case TK_ARRAY:
+		case TK_INT: {
+			const char *builtin_name = tokenId == TK_STRING ?
+			                           "String":
+			                           tokenId == TK_FLOAT ?
+			                           "Float":
+			                           tokenId==TK_ARRAY ?
+			                           "Array":
+			                           "Int";
+			expr_literal(pass_opt, ast, builtin_name);
+			return resolve(ast_type(ast), pass_opt);
+			//return resolve_nominal(type_builtin(pass_opt, ast, "String"), pass_opt);
+		}
+		case TK_LITERAL:
+			return ast_type(ast);
 		case TK_DOT:
-			return resolve_dot(ast, pass_opt);
+		case TK_TILDE:
+		case TK_CHAIN:
+			return resolve_member_access(ast, pass_opt);
 		case TK_CALL:
 			return resolve_call(ast, pass_opt);
 		case TK_VAR:
 		case TK_LET:
+		case TK_FLET:
+		case TK_FVAR:
+		case TK_PARAM:
 		case TK_EMBED: {
 			ast_t *parent = ast_parent(ast);
 			if (parent == nullptr)
@@ -306,6 +349,7 @@ ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 			return resolve(ast_childidx(parent, 1), pass_opt);
 		}
 		case TK_FUN:
+		case TK_BE:
 		case TK_NEW: {
 			ast_t *nominal = get_first_child_of(ast, TK_NOMINAL);
 			if (nominal == nullptr) {
@@ -313,6 +357,19 @@ ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 			}
 			return resolve_nominal(nominal, pass_opt);
 		}
+		case TK_SEQ: {
+			// TODO seek for return expressions?
+			ast_t *last = ast_child(ast);
+			LOG("SEQ:");
+			return resolve(last, pass_opt);
+		}
+		case TK_RECOVER:
+		case TK_CONSUME: {
+			ast_t *seq_node = ast_childlast(ast);
+			return resolve(seq_node, pass_opt);
+		}
+		case TK_NOMINAL:
+			return resolve_nominal(ast, pass_opt);
 		default: {
 			LOG("Tried to resolve unhandled ast type %s\n", token_id_desc(ast_id(ast)));
 			LOG_AST(ast);
@@ -411,7 +468,7 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 		return AST_OK;
 
 	// member completion
-	if (ast_id(*pAst) == TK_DOT || ast_id(*pAst) == TK_TILDE) {
+	if (ast_id(*pAst) == TK_DOT || ast_id(*pAst) == TK_TILDE || ast_id(*pAst) == TK_CHAIN) {
 		AST_GET_CHILDREN(*pAst, dot_left, dot_right);
 
 		// check if right is at caret
@@ -429,6 +486,7 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 			// check if resolved has a members node, if not, try to resolve the type from a nominal
 			while (resolved != nullptr && get_first_child_of(resolved, TK_MEMBERS) == nullptr) {
 				LOG("resolved is only a reference, going deeper");
+				ast_t *before = resolved;
 				resolved = resolve(resolved, opt);
 				if (resolved == nullptr) {
 					LOG("Failed resolving");

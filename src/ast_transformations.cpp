@@ -1,7 +1,6 @@
 #include "ast_transformations.hpp"
 #include <algorithm>
 #include <cstring>
-#include <logging.hpp>
 
 using namespace std;
 
@@ -40,7 +39,6 @@ vector<ast_t *> tree_to_sourceloc_ordered_sequence(ast_t *tree, pass_opt_t *opt,
 	pass_opt_data_guard data_guard(opt, &data);
 
 	ast_visit(&tree, nullptr, visit_seq_post, opt, PASS_ALL);
-	LOG("Got %zu nodes in sequence", data.nodes.size());
 
 	sort(data.nodes.begin(), data.nodes.end(),
 	     [](ast_t *a, ast_t *b) {
@@ -69,7 +67,6 @@ ast_t *find_identifier_at(ast_t *tree, pass_opt_t *opt, caret_t const &position,
 		caret_t node_loc(ast_line(node), ast_pos(node));
 
 		if (position.in_range(node_loc, ast_name_len(node))) {
-			LOG("Matched in file %s:%zu,%zu (%s)\n", source->file, node_loc.line, node_loc.column, ast_name(node));
 			return node;
 		}
 	}

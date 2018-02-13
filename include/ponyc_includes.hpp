@@ -12,5 +12,8 @@ extern "C" {
 #include <pkg/package.h>
 #include <pass/pass.h>
 #include <options/options.h>
+#include <expr/literal.h>
+#include <type/lookup.h>
+#include <type/assemble.h>
 }
 
