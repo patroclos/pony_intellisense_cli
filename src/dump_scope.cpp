@@ -187,10 +187,6 @@ ast_t *resolve_reference(ast_t *ref, pass_opt_t *) {
 
 	sym_status_t status;
 	return ast_get(id, ast_name(id), &status);
-	/*
-	if ((status != SYM_DEFINED && status != SYM_CONSUMED && status != SYM_UNDEFINED) || !valid_reference(opt, def, status))
-		return nullptr;
-	 */
 }
 
 ast_t *resolve_call(ast_t *call, pass_opt_t *opt) {
@@ -297,6 +293,14 @@ ast_t *resolve_member_access(ast_t *accessor, pass_opt_t *opt) {
 	return nullptr;
 }
 
+/**
+ * Resolve the underlying type definition given or inferred for ast
+ * fun -> return type
+ * var -> definition
+ * @param ast
+ * @param pass_opt
+ * @return
+ */
 ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 	pony_assert(ast != nullptr);
 
@@ -314,11 +318,11 @@ ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 		case TK_ARRAY:
 		case TK_INT: {
 			const char *builtin_name = tokenId == TK_STRING ?
-			                           "String":
+			                           "String" :
 			                           tokenId == TK_FLOAT ?
-			                           "Float":
-			                           tokenId==TK_ARRAY ?
-			                           "Array":
+			                           "Float" :
+			                           tokenId == TK_ARRAY ?
+			                           "Array" :
 			                           "Int";
 			expr_literal(pass_opt, ast, builtin_name);
 			return resolve(ast_type(ast), pass_opt);
@@ -380,8 +384,10 @@ ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 }
 
 struct scope_pass_data_t {
-	cli_opts_t options;
+	cli_opts_t &options;
 	Scope scope_msg;
+
+	explicit scope_pass_data_t(cli_opts_t &options) : options(options) {}
 };
 
 static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt);
@@ -389,8 +395,7 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt);
 void _dump_scope(cli_opts_t &options) {
 	ast_t *ast = ast_child(options.program);
 	pass_opt_t *opt = &options.pass_opt;
-	scope_pass_data_t scope_pass_data;
-	scope_pass_data.options = options;
+	scope_pass_data_t scope_pass_data(options);
 	scope_pass_data.scope_msg = Scope();
 
 
@@ -403,81 +408,35 @@ void _dump_scope(cli_opts_t &options) {
 	scope_pass_data.scope_msg.SerializeToOstream(&msg_stream);
 	fprintf(stderr, "[*] Scope Message Stats\nNum Symbols: %i\n", scope_pass_data.scope_msg.symbols_size());
 
-	/*
-	ast_t *self = ast;
-	for (size_t ast_i = 0; ast != nullptr; ast = ast_childidx(self, ast_i++)) {
-		if (ast != self)
-			_dump_scope(options);
-
-		if (ast_id(ast) != TK_ID)
-			continue;
-
-		source_t *src = ast_source(ast);
-		if (src == nullptr)// || src->file == nullptr)
-			continue;
-
-		auto pos = caret_t(ast_line(ast), ast_pos(ast));
-
-		// skip different files then the specified one
-		if (options.file.length() != 0 && options.file != src->file)
-			continue;
-
-		// skip different lines than the specified one
-		if (options.line != 0 && options.line != pos.line)
-			continue;
-
-		if (options.pos != 0 && options.pos != pos.column)
-			continue;
-
-		// iterate and print symbols available in scope
-		for (ast_t *node = ast; node != nullptr; node = ast_parent(node)) {
-			if (ast_id(node) == TK_PROGRAM)
-				break;
-			if (ast_has_scope(node)) {
-				ast_visit_scope(&ast, nullptr, print_vars, opt, PASS_ALL);
-				symtab_t *scope = ast_get_symtab(node);
-
-				size_t iter = HASHMAP_BEGIN;
-				for (;;) {
-					symbol_t *symbol = symtab_next(scope, &iter);
-					if (symbol == nullptr)
-						break;
-
-					symbol_info_t symbol_info = get_symbol_info(symbol);
-					printf("%s:%s", symbol_info.name, symbol_info.symbol_kind);
-					if (symbol_info.type_info != nullptr)
-						printf(":%s %s", symbol_info.type_info->type_kind, symbol_info.type_info->name);
-					printf("\n");
-
-			}
-		}
-	}
-*/
 }
 
 static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 	source_t *source = ast_source(*pAst);
 	if (source == nullptr)
 		return AST_OK;
-	caret_t pos(ast_line(*pAst), ast_pos(*pAst));
 
 	auto scope_pass_data = static_cast<scope_pass_data_t *>(opt->data);
+
+
+	if (scope_pass_data == nullptr)
+		return AST_IGNORE;
+
 	auto options = &scope_pass_data->options;
+
+	caret_t pos(ast_line(*pAst), ast_pos(*pAst));
+	caret_t cursor_pos = caret_t(options->line, options->pos);
 
 	if (options->line > 0 && pos.line != options->line)
 		return AST_OK;
 
+	token_id astid = ast_id(*pAst);
 	// member completion
-	if (ast_id(*pAst) == TK_DOT || ast_id(*pAst) == TK_TILDE || ast_id(*pAst) == TK_CHAIN) {
+	if (astid == TK_DOT || astid == TK_TILDE || astid == TK_CHAIN) {
 		AST_GET_CHILDREN(*pAst, dot_left, dot_right);
-
-		// check if right is at caret
-		caret_t cursor_pos = caret_t(options->line, options->pos);
-		caret_t right_pos = caret_t(pos.line, pos.column);
 
 		size_t id_len = ast_id(dot_right) == TK_ID ? ast_name_len(dot_right) : 1;
 
-		if (!cursor_pos.in_range(right_pos, id_len))
+		if (!cursor_pos.in_range(pos, id_len))
 			return AST_OK;
 
 		ast_t *resolved = resolve(dot_left, opt);
@@ -486,7 +445,6 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 			// check if resolved has a members node, if not, try to resolve the type from a nominal
 			while (resolved != nullptr && get_first_child_of(resolved, TK_MEMBERS) == nullptr) {
 				LOG("resolved is only a reference, going deeper");
-				ast_t *before = resolved;
 				resolved = resolve(resolved, opt);
 				if (resolved == nullptr) {
 					LOG("Failed resolving");
@@ -552,6 +510,75 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 				continue;
 
 		}
+
+		scope_pass_data->options.pass_opt.data = nullptr;
+		return AST_IGNORE;
+	} // end .,~,.>
+	else if (astid == TK_ID) {
+		size_t id_len = ast_name_len(*pAst);
+
+		if (!cursor_pos.in_range(pos, id_len))
+			return AST_OK;
+
+		if(ast_id(ast_parent(*pAst))==TK_REFERENCE) {
+			if (ast_id(ast_parent(ast_parent(*pAst))) == TK_DOT)
+				return AST_OK;
+		}else if(ast_id(ast_parent(*pAst))==TK_DOT)
+			return AST_OK;
+
+		LOG_AST(ast_parent(ast_parent(*pAst)));
+
+		for (ast_t *current = *pAst; current != nullptr && ast_id(current) != TK_PROGRAM; current = ast_parent(current)) {
+			if (!ast_has_scope(current))
+				continue;
+			symtab_t *scope = ast_get_symtab(current);
+			if (scope == nullptr)
+				continue;
+
+			size_t iter = HASHMAP_BEGIN;
+			for (;;) {
+				symbol_t *symbol = symtab_next(scope, &iter);
+				if (symbol == nullptr)
+					break;
+
+				if (symbol->status >= SYM_UNDEFINED)
+					continue;
+
+				if (symbol->name[0] == '$')
+					continue;
+
+				// do another lookup to make sure we dont get those weird UPPERCASED DUPLICATES
+				if (ast_get(*pAst, symbol->name, nullptr) == nullptr)
+					continue;
+
+				Symbol *symbol_msg = scope_pass_data->scope_msg.add_symbols();
+				symbol_msg->set_name(symbol->name);
+				{
+					SymbolKind kind_enum;
+					if (symbol->name == stringtab("AmbientAuth")) LOG(ast_print_type(symbol->def));
+					if (SymbolKind_Parse(ast_print_type(symbol->def), &kind_enum))
+						symbol_msg->set_kind(kind_enum);
+				}
+
+				{
+					SourceLocation *symbol_location = symbol_msg->mutable_definition_location();
+					source_t *source = ast_source(symbol->def);
+					if (source != nullptr)
+						symbol_location->set_file(source->file);
+					symbol_location->set_line((uint32_t) ast_line(symbol->def));
+					symbol_location->set_column((uint32_t) ast_pos(symbol->def));
+				}
+
+				{
+					ast_t *docstring = ast_childlast(symbol->def);
+					if(ast_id(docstring)==TK_STRING)
+						symbol_msg->set_docstring(ast_name(docstring));
+				}
+			}
+		}
+
+		scope_pass_data->options.pass_opt.data = nullptr;
+		return AST_IGNORE;
 	}
 	return AST_OK;
 }

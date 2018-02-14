@@ -24,7 +24,10 @@ add_executable(ponylang_llvm_tester
         src/dump_ast.cpp
         src/dump_scope.cpp
         src/ast_transformations.cpp
-        ${PROTO_SRCS} include/logging.hpp src/get_symbol.cpp src/get_symbol.hpp)
+        src/get_symbol.cpp
+        src/PonyType.cpp
+        ${PROTO_SRCS}
+        )
 
 target_link_libraries(ponylang_llvm_tester ${PROTOBUF_LIBRARIES})
 #target_link_libraries(ponylang_llvm_tester pthread ponyc ponyrt dl atomic LLVM-4.0 m blake2)

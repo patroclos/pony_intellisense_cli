@@ -2,10 +2,27 @@ syntax = "proto3";
 
 // type of symbol (eg. let, var, flet, fun, be...)
 enum SymbolKind {
-    let = 0;
-    var = 1;
-    flet = 2;
-    fun = 3;
+    unknown = 0;
+    package = 1;
+    module = 2;
+    type = 3;
+    interface = 4;
+    trait = 5;
+    primitive = 6;
+    struct = 7;
+    class = 8;
+    actor = 9;
+    object = 10;
+    lambda = 11;
+    barelambda = 12;
+    var = 13;
+    let = 14;
+    embed = 15;
+    dontcare = 16;
+    new = 17;
+    fun = 18;
+    be = 19;
+    param = 20;
 }
 
 // pony reference capabilities
