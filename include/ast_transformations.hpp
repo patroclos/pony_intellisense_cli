@@ -23,3 +23,4 @@ std::vector<ast_t *> tree_to_sourceloc_ordered_sequence(ast_t *tree, pass_opt_t 
 
 ast_t *find_identifier_at(ast_t *tree, pass_opt_t *opt, caret_t const &position, std::string const &sourcefile);
 
+ast_t *ast_first_child_of_type(ast_t *parent, token_id id);

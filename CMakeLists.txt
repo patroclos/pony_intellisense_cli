@@ -19,6 +19,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 PROTOBUF_GENERATE_CPP(PROTO_SRCS PROTO_HDRS protocols/scope.proto)
 
 add_executable(ponylang_llvm_tester
+        ${PROTO_SRCS}
         src/main.cpp
         src/pos.cpp
         src/dump_ast.cpp
@@ -26,7 +27,7 @@ add_executable(ponylang_llvm_tester
         src/ast_transformations.cpp
         src/get_symbol.cpp
         src/PonyType.cpp
-        ${PROTO_SRCS}
+        src/TypeResolver.cpp
         )
 
 target_link_libraries(ponylang_llvm_tester ${PROTOBUF_LIBRARIES})

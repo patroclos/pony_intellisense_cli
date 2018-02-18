@@ -47,6 +47,15 @@ message SourceLocation {
     int32 column = 3;
 }
 
+message Parameter {
+    string name = 1;
+    RefCap cap = 2;
+    TypeInfo type = 3;
+}
+
+message TypeArgument {
+}
+
 message Symbol {
     string name = 1;
     string docstring = 2;
@@ -54,6 +63,9 @@ message Symbol {
     RefCap cap = 4;
     TypeInfo type = 5;
     SourceLocation definition_location = 6;
+
+    repeated Parameter parameters = 7;
+    repeated TypeArgument typeargs = 8; // does this make any sense?
 }
 
 message Scope {

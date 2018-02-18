@@ -73,3 +73,11 @@ ast_t *find_identifier_at(ast_t *tree, pass_opt_t *opt, caret_t const &position,
 
 	return nullptr;
 }
+
+ast_t *ast_first_child_of_type(ast_t *parent, token_id id) {
+	for (ast_t *ast = ast_child(parent); ast != nullptr; ast = ast_sibling(ast))
+		if (ast_id(ast) == id)
+			return ast;
+	return nullptr;
+}
+
