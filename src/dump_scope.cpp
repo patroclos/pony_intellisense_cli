@@ -94,11 +94,22 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 			LOG("Num members public: %zu", members_public.size());
 
 			for (auto &member : resolved_type->_getMembers(opt)) {
-				if(member.name() == "apply")
-				LOG("%s => %s", member.name().c_str(), member.type()->name().c_str());
+				Symbol *symbol = scope_pass_data->scope_msg.add_symbols();
+				symbol->set_name(member.m_Name);
+				symbol->set_docstring(member.docstring());
+				if(member.type())
+				{
+					TypeInfo *typeInfo = symbol->mutable_type();
+					typeInfo->set_name(member.type()->name());
+					typeInfo->set_docstring(member.type()->docstring());
+				}
+
+				//if (member.name() == "apply")
+				//	if (member.m_Type) LOG("%s => %s", member.name().c_str(), member.type()->name().c_str());
 			}
 
 		} else LOG("NO has value!!");
+		return AST_OK;
 
 		ast_t *resolved = resolve(dot_left, opt);
 

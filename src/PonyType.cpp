@@ -66,9 +66,12 @@ const std::vector<ast_t *> PonyType::getProvides() {
 }
 
 void PonyType::set_typeargs(ast_t *typeargs) {
+	m_TypeArgs = typeargs;
+	// TODO resolve later? and map typeparam name (eg. A,B) to nominal/type
 	for (size_t i = 0; i < ast_childcount(typeargs); i++) {
 		ast_t *nominal = ast_childidx(typeargs, i);
 	}
+	LOG_AST(typeargs);
 }
 
 static void push_nominal_descendents(ast_t *ast, set<ast_t *> &vec) {
@@ -129,17 +132,34 @@ vector<PonyMember> PonyType::_getMembers(pass_opt_t *pass_opt) const {
 	std::vector<PonyMember> members;
 
 	for (auto &def :members_defs) {
-		std::string name = ast_name(ast_first_child_of_type(def, TK_ID));
-
-		if(name=="apply")
-			LOG_AST(def);
 
 		PonyMember member;
+		member.m_Name = ast_name(ast_first_child_of_type(def, TK_ID));
 
-		member.m_Name = name;
+		ast_t *typeargs = ast_childidx(def, 4);
+
+		if (member.m_Name == "apply") LOG_AST(typeargs);
+
+		if (ast_id(def) == TK_FUN && ast_id(typeargs) == TK_ARROW) {
+			ast_t *tpr = ast_childidx(typeargs, 1);
+			if (tpr != nullptr) {
+				const char *tpr_id = ast_name(ast_child(tpr));
+
+				for (size_t i = 0; i < m_TypeParams.size(); i++) {
+					if (ast_name(ast_child(m_TypeParams[i])) == tpr_id) {
+						ast_t *specified = ast_childidx(m_TypeArgs, i);
+						optional<PonyType> resolved = TypeResolver(specified, pass_opt).resolve();
+						if (resolved) {
+							member.m_Type = resolved;
+						}
+						break;
+					}
+				}
+			}
+		}
 
 		ast_t *doc_node = ast_first_child_of_type(def, TK_STRING);
-		if(doc_node != nullptr)
+		if (doc_node != nullptr)
 			member.m_Docstring = ast_name(doc_node);
 
 		members.push_back(member);

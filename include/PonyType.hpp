@@ -37,7 +37,8 @@ private:
 	std::vector<ast_t *> m_TypeParams;
 	std::vector<ast_t *> m_Provides;
 
-	std::vector<PonyType> m_TypeArgs;
+	//std::vector<PonyType> m_TypeArgs;
+	ast_t *m_TypeArgs;
 
 protected:
 	explicit PonyType(ast_t *definition);
