@@ -3,7 +3,7 @@
 #include "pos.hpp"
 #include "ast_transformations.hpp"
 #include "logging.hpp"
-#include "TypeResolver.hpp"
+#include "ExpressionTypeResolver.hpp"
 #include "PonyType.hpp"
 
 // protobuf
@@ -76,14 +76,14 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 		if (!cursor_pos.in_range(pos, id_len))
 			return AST_OK;
 
-		TypeResolver typeResolver(dot_left, opt);
+		ExpressionTypeResolver typeResolver(dot_left, opt);
 		auto resolved_type = typeResolver.resolve();
 		if (resolved_type.has_value()) {
 			LOG("Has value!");
 			LOG("%p", &resolved_type.value());
 			LOG("%s is the name", resolved_type.value().name().c_str());
 
-			auto members = resolved_type->getMembers(opt);
+			auto members = resolved_type->getMembersRaw(opt);
 			LOG("Num members: %zu", members.size());
 
 			auto members_public = set<ast_t *>();
@@ -93,10 +93,15 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 
 			LOG("Num members public: %zu", members_public.size());
 
-			for (auto &member : resolved_type->_getMembers(opt)) {
+			for (auto &member : resolved_type->getMembers(opt)) {
+
+				if(member.name()[0] == '_')
+					continue;
+
 				Symbol *symbol = scope_pass_data->scope_msg.add_symbols();
 				symbol->set_name(member.m_Name);
 				symbol->set_docstring(member.docstring());
+				symbol->set_kind(member.m_Kind);
 				if(member.type())
 				{
 					TypeInfo *typeInfo = symbol->mutable_type();
@@ -140,7 +145,7 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 			} else type = resolved;
 		}
 		PonyType ponyType = PonyType::fromDefinition(type);
-		for (auto &member : ponyType.getMembers(opt)) {
+		for (auto &member : ponyType.getMembersRaw(opt)) {
 			ast_t *id = ast_child(member);
 			while (id != nullptr && ast_id(id) != TK_ID)
 				id = ast_sibling(id);

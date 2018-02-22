@@ -14,17 +14,12 @@ class type_resolve_frame_t {
 public:
 	ast_t *m_Expression;
 	const pony_refcap_t m_ViewpointCap;
-private:
-	std::map<const char *, PonyType> m_ViewpointTypeargs;
 public:
 	explicit type_resolve_frame_t(ast_t *expression,
-	                              pony_refcap_t = pony_refcap_t::unknown,
-	                              std::map<const char *, PonyType> = {});
-
-	std::optional<PonyType> resolve_typearg(const char *typeargName);
+	                              pony_refcap_t = pony_refcap_t::unknown);
 };
 
-class TypeResolver {
+class ExpressionTypeResolver {
 private:
 	std::stack<type_resolve_frame_t> m_Frames;
 	pass_opt_t *m_PassOpt;
@@ -37,8 +32,9 @@ private:
 	bool resolveNominal(type_resolve_frame_t &frame);
 	bool resolveAssign(type_resolve_frame_t &frame);
 	bool resolveQualify(type_resolve_frame_t &frame);
+	bool resolveMemberAccess(type_resolve_frame_t &frame);
 public:
 	// TODO constructor taking PonyType thistype for resolving such references (eg (-> thistype (typeparamref (id A))))
-	TypeResolver(ast_t *expression, pass_opt_t *pass_opt);
+	ExpressionTypeResolver(ast_t *expression, pass_opt_t *pass_opt);
 	std::optional<PonyType> resolve();
 };

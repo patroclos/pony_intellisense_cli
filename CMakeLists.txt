@@ -27,7 +27,7 @@ add_executable(ponylang_llvm_tester
         src/ast_transformations.cpp
         src/get_symbol.cpp
         src/PonyType.cpp
-        src/TypeResolver.cpp
+        src/ExpressionTypeResolver.cpp
         )
 
 target_link_libraries(ponylang_llvm_tester ${PROTOBUF_LIBRARIES})

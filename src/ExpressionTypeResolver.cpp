@@ -1,4 +1,4 @@
-#include "TypeResolver.hpp"
+#include "ExpressionTypeResolver.hpp"
 #include <logging.hpp>
 #include <optional>
 #include "ast_transformations.hpp"
@@ -235,11 +235,11 @@ ast_t *resolve(ast_t *ast, pass_opt_t *pass_opt) {
 	}
 }
 
-TypeResolver::TypeResolver(ast_t *expression, pass_opt_t *pass_opt) : m_PassOpt(pass_opt) {
-	m_Frames.push(type_resolve_frame_t(expression));
+ExpressionTypeResolver::ExpressionTypeResolver(ast_t *expression, pass_opt_t *pass_opt) : m_PassOpt(pass_opt) {
+	m_Frames.emplace(expression);
 }
 
-optional<PonyType> TypeResolver::resolve() {
+optional<PonyType> ExpressionTypeResolver::resolve() {
 	// don't rerun successfull resolve
 	if (m_Type)
 		return m_Type;
@@ -253,12 +253,12 @@ optional<PonyType> TypeResolver::resolve() {
 	}
 }
 
-bool TypeResolver::resolveReference(type_resolve_frame_t &frame) {
+bool ExpressionTypeResolver::resolveReference(type_resolve_frame_t &frame) {
 	ast_t *resolved = resolve_reference(frame.m_Expression, m_PassOpt);
 
 	if (resolved != nullptr) {
 		// TODO include viewpoint information
-		m_Frames.push(type_resolve_frame_t(resolved));
+		m_Frames.emplace(resolved);
 		return true;
 	}
 
@@ -276,58 +276,90 @@ static const char *get_builtin_typename(token_id token) {
 	       "Int" : nullptr;
 }
 
-bool TypeResolver::resolveLiteral(type_resolve_frame_t &frame) {
+bool ExpressionTypeResolver::resolveLiteral(type_resolve_frame_t &frame) {
 	const char *builtin_name = get_builtin_typename(ast_id(frame.m_Expression));
 	pony_assert(builtin_name != nullptr);
 
 	expr_literal(m_PassOpt, frame.m_Expression, builtin_name);
-	m_Frames.push(type_resolve_frame_t(ast_type(frame.m_Expression)));
+	m_Frames.emplace(ast_type(frame.m_Expression));
 	return true;
 }
 
-bool TypeResolver::resolveNominal(type_resolve_frame_t &frame) {
+bool ExpressionTypeResolver::resolveNominal(type_resolve_frame_t &frame) {
 	ast_t *resolved = resolve_nominal(frame.m_Expression, m_PassOpt);
 	if (resolved == nullptr)
 		return false;
-	m_Type = PonyType::fromDefinition(resolved);
+	m_Type.emplace(PonyType::fromDefinition(resolved));
 
 	ast_t *typeargs = ast_childidx(frame.m_Expression, 2);
 	if (ast_id(typeargs) == TK_TYPEARGS)
-		m_Type.value().set_typeargs(typeargs);
+		m_Type.value().setTypeargs(typeargs);
 
-	m_Frames.push(type_resolve_frame_t(resolved));
+	m_Frames.emplace(resolved);
 	return true;
 }
 
-bool TypeResolver::resolveQualify(type_resolve_frame_t &frame) {
+bool ExpressionTypeResolver::resolveQualify(type_resolve_frame_t &frame) {
 	AST_GET_CHILDREN(frame.m_Expression, left, qualification);
 	pony_assert(ast_id(qualification) == TK_TYPEARGS);
 
-	auto leftResolve = TypeResolver(left, m_PassOpt).resolve();
+	auto leftResolve = ExpressionTypeResolver(left, m_PassOpt).resolve();
 	if (!leftResolve)
 		return false;
 
-	leftResolve.value().set_typeargs(qualification);
-	m_Type = leftResolve;
+	leftResolve.value().setTypeargs(qualification);
+	m_Type.emplace(leftResolve.value());
 	return true;
 }
 
-bool TypeResolver::resolveAssign(type_resolve_frame_t &frame) {
+bool ExpressionTypeResolver::resolveAssign(type_resolve_frame_t &frame) {
 	// try resolving type by nominal
 	ast_t *assignee = ast_child(frame.m_Expression);
 	ast_t *nominal = ast_first_child_of_type(assignee, TK_NOMINAL);
 	if (nominal != nullptr) {
-		m_Frames.push(type_resolve_frame_t(nominal));
+		m_Frames.emplace(nominal);
 		return true;
 	}
 
 	// try resolving type by assigned expression
 	ast_t *right = ast_childidx(frame.m_Expression, 1);
-	m_Frames.push(type_resolve_frame_t(right));
+	m_Frames.emplace(right);
 	return true;
 }
 
-bool TypeResolver::resolveExpression(type_resolve_frame_t &frame) {
+bool ExpressionTypeResolver::resolveMemberAccess(type_resolve_frame_t &frame) {
+	token_id tokenId = ast_id(frame.m_Expression);
+	pony_assert(tokenId == TK_DOT || tokenId == TK_TILDE || tokenId == TK_CHAIN);
+
+	AST_GET_CHILDREN(frame.m_Expression, left, right);
+
+	pony_assert(ast_id(right) == TK_ID);
+
+	optional<PonyType> leftType = ExpressionTypeResolver(left, m_PassOpt).resolve();
+
+	if (!leftType)
+		return false;
+
+	bool is_chain = tokenId == TK_CHAIN;
+
+	if (is_chain) {
+		m_Type = leftType;
+		return true;
+	}
+
+	auto members = leftType->getMembers(m_PassOpt);
+
+	for (auto &member : leftType->getMembers(m_PassOpt))
+		if (!member.type() || member.m_Name != ast_name(right))
+			continue;
+		else {
+			m_Type = member.type();
+			return true;
+		}
+	return false;
+}
+
+bool ExpressionTypeResolver::resolveExpression(type_resolve_frame_t &frame) {
 	LOG("TR: resolving frame %s\n", token_id_desc(ast_id(frame.m_Expression)));
 
 	switch (ast_id(frame.m_Expression)) {
@@ -337,7 +369,7 @@ bool TypeResolver::resolveExpression(type_resolve_frame_t &frame) {
 		case TK_ACTOR:
 		case TK_TYPE:
 		case TK_INTERFACE:
-			m_Type = PonyType::fromDefinition(frame.m_Expression);
+			m_Type.emplace(PonyType::fromDefinition(frame.m_Expression));
 			return true;
 
 		case TK_STRING:
@@ -346,7 +378,7 @@ bool TypeResolver::resolveExpression(type_resolve_frame_t &frame) {
 		case TK_INT:
 			return resolveLiteral(frame);
 		case TK_LITERAL:
-			m_Frames.push(type_resolve_frame_t(ast_type(frame.m_Expression)));
+			m_Frames.emplace(ast_type(frame.m_Expression));
 			return true;
 
 		case TK_REFERENCE:
@@ -372,8 +404,24 @@ bool TypeResolver::resolveExpression(type_resolve_frame_t &frame) {
 		case TK_FVAR:
 		case TK_PARAM:
 		case TK_EMBED:
-			// push parent assign
-			m_Frames.push(type_resolve_frame_t(ast_parent(frame.m_Expression)));
+		case TK_MATCH_CAPTURE: {
+			ast_t *nominal = ast_childidx(frame.m_Expression, 1);
+			if (ast_id(nominal) == TK_NOMINAL) {
+				LOG_AST(nominal);
+				m_Frames.emplace(nominal);
+				return true;
+			}
+
+			ast_t *parent = ast_parent(frame.m_Expression);
+			if (ast_id(parent) == TK_ASSIGN) {
+				m_Frames.emplace(ast_parent(frame.m_Expression));
+				return true;
+			}
+
+			return false;
+		}
+		case TK_CALL:
+			m_Frames.emplace(ast_child(frame.m_Expression));
 			return true;
 		case TK_ASSIGN:
 			return resolveAssign(frame);
@@ -381,24 +429,18 @@ bool TypeResolver::resolveExpression(type_resolve_frame_t &frame) {
 			return resolveNominal(frame);
 		case TK_QUALIFY:
 			return resolveQualify(frame);
-		default:
-			LOG("TR: NO HANDLER!!");
+		case TK_DOT:
+		case TK_TILDE:
+		case TK_CHAIN:
+			return resolveMemberAccess(frame);
+		default: LOG("TR: NO HANDLER!!");
 			return false;
 	}
 }
 
-std::optional<PonyType> type_resolve_frame_t::resolve_typearg(const char *typeargName) {
-	typeargName = stringtab(typeargName);
-	if (m_ViewpointTypeargs.find(typeargName) == m_ViewpointTypeargs.end())
-		return std::nullopt;
-
-	return (*m_ViewpointTypeargs.find(typeargName)).second;
-}
-
 type_resolve_frame_t::type_resolve_frame_t(
 		ast_t *expression,
-		pony_refcap_t viewpoint_cap,
-		std::map<const char *, PonyType> viewpoint_typeargs)
+		pony_refcap_t viewpoint_cap)
 		: m_Expression(expression),
-		  m_ViewpointCap(viewpoint_cap),
-		  m_ViewpointTypeargs(std::move(viewpoint_typeargs)) {}
+		  m_ViewpointCap(viewpoint_cap) {}
+

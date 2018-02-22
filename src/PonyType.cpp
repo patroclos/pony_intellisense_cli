@@ -1,17 +1,16 @@
 #include "PonyType.hpp"
-#include "TypeResolver.hpp"
+#include "ExpressionTypeResolver.hpp"
 #include "ast_transformations.hpp"
 #include "logging.hpp"
 
 #include <algorithm>
-#include <set>
 
 using namespace std;
 
 
 PonyType::PonyType(ast_t *definition) {
 	pony_assert(definition != nullptr);
-	token_id valid_tokens[] = {TK_CLASS, TK_ACTOR, TK_STRUCT, TK_INTERFACE, TK_TRAIT, TK_PRIMITIVE};
+	token_id valid_tokens[] = {TK_CLASS, TK_ACTOR, TK_STRUCT, TK_INTERFACE, TK_TRAIT, TK_PRIMITIVE, TK_TYPE};
 	bool is_valid_tokentype = false;
 	for (auto a : valid_tokens) {
 		is_valid_tokentype |= ast_id(definition) == a;
@@ -45,27 +44,7 @@ PonyType PonyType::fromDefinition(ast_t *definition) {
 	return PonyType(definition);
 }
 
-string PonyType::name() const {
-	return m_Name;
-}
-
-string PonyType::docstring() const {
-	return m_DocString;
-}
-
-PonyType PonyType::fromNominal(ast_t *nominal) {
-	pony_assert(nominal != nullptr && ast_id(nominal) == TK_NOMINAL);
-
-	AST_GET_CHILDREN(nominal, pkg, id, typeargs, cap, eph, aliased);
-
-	return PonyType(ast_get(nominal, ast_name(id), nullptr));
-}
-
-const std::vector<ast_t *> PonyType::getProvides() {
-	return m_Provides;
-}
-
-void PonyType::set_typeargs(ast_t *typeargs) {
+void PonyType::setTypeargs(ast_t *typeargs) {
 	m_TypeArgs = typeargs;
 	// TODO resolve later? and map typeparam name (eg. A,B) to nominal/type
 	for (size_t i = 0; i < ast_childcount(typeargs); i++) {
@@ -94,12 +73,12 @@ push_provided_members(ast_t *provider, set<ast_t *> &member_set, pass_opt_t *pas
 
 		// check if same name is already contained, so we dont get duplicates from overriding
 		// TODO keep track of overrides somewhare for more indepth inspections
-		bool can_add = std::none_of(member_set.begin(), member_set.end(),
+		bool is_first_member_of_name = std::none_of(member_set.begin(), member_set.end(),
 		                            [member](ast_t *m) {
 			                            return ast_name(ast_first_child_of_type(m, TK_ID)) ==
 			                                   ast_name(ast_first_child_of_type(member, TK_ID));
 		                            });
-		if (can_add)
+		if (is_first_member_of_name)
 			member_set.insert(ast_childidx(members, i));
 	}
 
@@ -116,7 +95,7 @@ push_provided_members(ast_t *provider, set<ast_t *> &member_set, pass_opt_t *pas
 	}
 }
 
-std::set<ast_t *> PonyType::getMembers(pass_opt_t *pass_opt) const {
+std::set<ast_t *> PonyType::getMembersRaw(pass_opt_t *pass_opt) const {
 	std::set<ast_t *> members = std::set<ast_t *>();
 
 	push_provided_members(m_Def, members, pass_opt);
@@ -125,7 +104,7 @@ std::set<ast_t *> PonyType::getMembers(pass_opt_t *pass_opt) const {
 }
 
 
-vector<PonyMember> PonyType::_getMembers(pass_opt_t *pass_opt) const {
+vector<PonyMember> PonyType::getMembers(pass_opt_t *pass_opt) const {
 	std::set<ast_t *> members_defs;
 	push_provided_members(m_Def, members_defs, pass_opt);
 
@@ -136,22 +115,34 @@ vector<PonyMember> PonyType::_getMembers(pass_opt_t *pass_opt) const {
 		PonyMember member;
 		member.m_Name = ast_name(ast_first_child_of_type(def, TK_ID));
 
-		ast_t *typeargs = ast_childidx(def, 4);
+		if(!SymbolKind_Parse(token_id_desc(ast_id(def)), &member.m_Kind))
+			member.m_Kind = unknown;
 
-		if (member.m_Name == "apply") LOG_AST(typeargs);
+		ast_t *memberTypeNode = ast_childidx(def, 4);
 
-		if (ast_id(def) == TK_FUN && ast_id(typeargs) == TK_ARROW) {
-			ast_t *tpr = ast_childidx(typeargs, 1);
+		if (member.m_Name == "apply") LOG_AST(memberTypeNode);
+
+		// TODO resolve memberTypeNode with this type as context information (eg. typeparams etc)
+		// eg. member.m_Type = ExpressionTypeResolver(memberTypeNode, this, m_PassOpt).resolve()
+
+		if(ast_id(memberTypeNode) !=TK_ARROW) {
+			LOG("Could not resolve typearg for %s", member.name().c_str());
+			LOG_AST(memberTypeNode);
+		}
+
+		if (ast_id(def) == TK_FUN && ast_id(memberTypeNode) == TK_ARROW) {
+			ast_t *tpr = ast_childidx(memberTypeNode, 1);
 			if (tpr != nullptr) {
 				const char *tpr_id = ast_name(ast_child(tpr));
 
+				LOG(tpr_id);
+
 				for (size_t i = 0; i < m_TypeParams.size(); i++) {
-					if (ast_name(ast_child(m_TypeParams[i])) == tpr_id) {
-						ast_t *specified = ast_childidx(m_TypeArgs, i);
-						optional<PonyType> resolved = TypeResolver(specified, pass_opt).resolve();
-						if (resolved) {
-							member.m_Type = resolved;
-						}
+					if (ast_name(ast_child(m_TypeParams[i])) != tpr_id) continue;
+					ast_t *specified = ast_childidx(m_TypeArgs, i);
+					optional<PonyType> resolved = ExpressionTypeResolver(specified, pass_opt).resolve();
+					if (resolved) {
+						member.m_Type = resolved;
 						break;
 					}
 				}

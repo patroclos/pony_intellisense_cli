@@ -29,6 +29,7 @@ enum class pony_refcap_t {
 
 struct PonyMember;
 
+// TODO somehow represent unions,intersections and tuples
 class PonyType {
 private:
 	ast_t *m_Def;
@@ -37,28 +38,25 @@ private:
 	std::vector<ast_t *> m_TypeParams;
 	std::vector<ast_t *> m_Provides;
 
-	//std::vector<PonyType> m_TypeArgs;
 	ast_t *m_TypeArgs;
 
 protected:
 	explicit PonyType(ast_t *definition);
 
 public:
-	static PonyType fromNominal(ast_t *nominal);
-
 	static PonyType fromDefinition(ast_t *definition);
 
-	void set_typeargs(ast_t *typeargs);
+	ast_t *definition() const { return m_Def; }
 
-	std::string name() const;
+	std::string name() const { return m_Name; }
 
-	std::string docstring() const;
+	std::string docstring() const { return m_DocString; }
 
-	const std::vector<ast_t *> getProvides();
+	void setTypeargs(ast_t *typeargs);
 
-	std::set<ast_t *> getMembers(pass_opt_t *pass_opt) const;
+	std::set<ast_t *> getMembersRaw(pass_opt_t *pass_opt) const;
 
-	std::vector<PonyMember> _getMembers(pass_opt_t *pass_opt) const;
+	std::vector<PonyMember> getMembers(pass_opt_t *pass_opt) const;
 };
 
 struct PonyMember {
@@ -67,8 +65,11 @@ public:
 	std::string m_Docstring;
 	std::optional<PonyType> m_Type;
 	pony_refcap_t m_Capability;
+	SymbolKind m_Kind;
 public:
 	std::string name() const { return m_Name; }
+
 	std::string docstring() const { return m_Docstring; }
+
 	std::optional<PonyType> type() const { return m_Type; }
 };
