@@ -1,3 +1,6 @@
 [submodule "protocols"]
 	path = protocols
 	url = git@github.com:patroclos/pony_intellisense_protocols.git
+[submodule "lib/ponyc"]
+	path = lib/ponyc
+	url = git@github.com:patroclos/pony_intellisense_ponyc.git
