@@ -21,7 +21,6 @@ PonyType::PonyType(ast_t *definition) {
 
 	m_Def = definition;
 	m_Name = ast_name(id);
-	LOG(m_Name.c_str());
 
 	if (ast_id(docstring) == TK_STRING)
 		m_DocString = ast_name(docstring);
@@ -46,11 +45,7 @@ PonyType PonyType::fromDefinition(ast_t *definition) {
 
 void PonyType::setTypeargs(ast_t *typeargs) {
 	m_TypeArgs = typeargs;
-	// TODO resolve later? and map typeparam name (eg. A,B) to nominal/type
-	for (size_t i = 0; i < ast_childcount(typeargs); i++) {
-		ast_t *nominal = ast_childidx(typeargs, i);
-	}
-	LOG_AST(typeargs);
+	// TODO where to resolve typeargs types
 }
 
 static void push_nominal_descendents(ast_t *ast, set<ast_t *> &vec) {
@@ -66,7 +61,7 @@ static void push_nominal_descendents(ast_t *ast, set<ast_t *> &vec) {
 }
 
 static void
-push_provided_members(ast_t *provider, set<ast_t *> &member_set, pass_opt_t *pass_opt) {
+collect_provided_members(ast_t *provider, set<ast_t *> &member_set, pass_opt_t *pass_opt) {
 	ast_t *members = ast_childidx(provider, 4);
 	for (size_t i = 0; i < ast_childcount(members); i++) {
 		ast_t *member = ast_childidx(members, i);
@@ -74,10 +69,10 @@ push_provided_members(ast_t *provider, set<ast_t *> &member_set, pass_opt_t *pas
 		// check if same name is already contained, so we dont get duplicates from overriding
 		// TODO keep track of overrides somewhare for more indepth inspections
 		bool is_first_member_of_name = std::none_of(member_set.begin(), member_set.end(),
-		                            [member](ast_t *m) {
-			                            return ast_name(ast_first_child_of_type(m, TK_ID)) ==
-			                                   ast_name(ast_first_child_of_type(member, TK_ID));
-		                            });
+		                                            [member](ast_t *m) {
+			                                            return ast_name(ast_first_child_of_type(m, TK_ID)) ==
+			                                                   ast_name(ast_first_child_of_type(member, TK_ID));
+		                                            });
 		if (is_first_member_of_name)
 			member_set.insert(ast_childidx(members, i));
 	}
@@ -91,67 +86,38 @@ push_provided_members(ast_t *provider, set<ast_t *> &member_set, pass_opt_t *pas
 		if (resolved == nullptr)
 			continue;
 
-		push_provided_members(resolved, member_set, pass_opt);
+		collect_provided_members(resolved, member_set, pass_opt);
 	}
-}
-
-std::set<ast_t *> PonyType::getMembersRaw(pass_opt_t *pass_opt) const {
-	std::set<ast_t *> members = std::set<ast_t *>();
-
-	push_provided_members(m_Def, members, pass_opt);
-
-	return members;
 }
 
 
 vector<PonyMember> PonyType::getMembers(pass_opt_t *pass_opt) const {
 	std::set<ast_t *> members_defs;
-	push_provided_members(m_Def, members_defs, pass_opt);
+	collect_provided_members(m_Def, members_defs, pass_opt);
 
 	std::vector<PonyMember> members;
 
 	for (auto &def :members_defs) {
 
 		PonyMember member;
-		member.m_Name = ast_name(ast_first_child_of_type(def, TK_ID));
+		member.set_name(ast_name(ast_first_child_of_type(def, TK_ID)));
+		member.set_definition(def);
 
-		if(!SymbolKind_Parse(token_id_desc(ast_id(def)), &member.m_Kind))
+		if (!SymbolKind_Parse(token_id_desc(ast_id(def)), &member.m_Kind)) {
 			member.m_Kind = unknown;
+			LOG("could not parse symbolkind %s", token_id_desc(ast_id(def)));
+		}
 
 		ast_t *memberTypeNode = ast_childidx(def, 4);
 
-		if (member.m_Name == "apply") LOG_AST(memberTypeNode);
-
-		// TODO resolve memberTypeNode with this type as context information (eg. typeparams etc)
-		// eg. member.m_Type = ExpressionTypeResolver(memberTypeNode, this, m_PassOpt).resolve()
-
-		if(ast_id(memberTypeNode) !=TK_ARROW) {
-			LOG("Could not resolve typearg for %s", member.name().c_str());
-			LOG_AST(memberTypeNode);
-		}
-
-		if (ast_id(def) == TK_FUN && ast_id(memberTypeNode) == TK_ARROW) {
-			ast_t *tpr = ast_childidx(memberTypeNode, 1);
-			if (tpr != nullptr) {
-				const char *tpr_id = ast_name(ast_child(tpr));
-
-				LOG(tpr_id);
-
-				for (size_t i = 0; i < m_TypeParams.size(); i++) {
-					if (ast_name(ast_child(m_TypeParams[i])) != tpr_id) continue;
-					ast_t *specified = ast_childidx(m_TypeArgs, i);
-					optional<PonyType> resolved = ExpressionTypeResolver(specified, pass_opt).resolve();
-					if (resolved) {
-						member.m_Type = resolved;
-						break;
-					}
-				}
-			}
+		if (memberTypeNode != nullptr) {
+			auto resolver = ExpressionTypeResolver(memberTypeNode, pass_opt);
+			member.set_type(resolver.resolve(*this));
 		}
 
 		ast_t *doc_node = ast_first_child_of_type(def, TK_STRING);
 		if (doc_node != nullptr)
-			member.m_Docstring = ast_name(doc_node);
+			member.set_docstring(ast_name(doc_node));
 
 		members.push_back(member);
 	}
@@ -159,3 +125,45 @@ vector<PonyMember> PonyType::getMembers(pass_opt_t *pass_opt) const {
 	return members;
 }
 
+std::optional<PonyType> PonyType::getTypearg(std::string &name, pass_opt_t *pass_opt) {
+	for (size_t i = 0; i < m_TypeParams.size(); i++) {
+		ast_t *arg = ast_childidx(m_TypeArgs, i);
+		if (name != ast_name(ast_child(m_TypeParams[i])))
+			continue;
+
+		return ExpressionTypeResolver(arg, pass_opt).resolve(*this);
+	}
+	return optional<PonyType>();
+}
+
+void PonyMember::set_name(const string &m_Name) {
+	PonyMember::m_Name = m_Name;
+}
+
+void PonyMember::set_docstring(const string &m_Docstring) {
+	PonyMember::m_Docstring = m_Docstring;
+}
+
+void PonyMember::set_type(const optional<PonyType> &m_Type) {
+	PonyMember::m_Type = m_Type;
+}
+
+void PonyMember::set_capability(pony_refcap_t m_Capability) {
+	PonyMember::m_Capability = m_Capability;
+}
+
+const string &PonyMember::get_name() const {
+	return m_Name;
+}
+
+const string &PonyMember::get_docstring() const {
+	return m_Docstring;
+}
+
+const optional<PonyType> &PonyMember::get_type() const {
+	return m_Type;
+}
+
+pony_refcap_t PonyMember::get_capability() const {
+	return m_Capability;
+}

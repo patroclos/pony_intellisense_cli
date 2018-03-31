@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(ponylang_llvm_tester)
+project(pony_intellisense_cli)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,7 +18,7 @@ set(PROTOBUF_SRC_ROOT_FOLDER ${CMAKE_SOURCE_DIR}/protocols)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 PROTOBUF_GENERATE_CPP(PROTO_SRCS PROTO_HDRS protocols/scope.proto)
 
-add_executable(ponylang_llvm_tester
+add_executable(pony_intellisense_cli
         ${PROTO_SRCS}
         src/main.cpp
         src/pos.cpp
@@ -30,5 +30,4 @@ add_executable(ponylang_llvm_tester
         src/ExpressionTypeResolver.cpp
         )
 
-target_link_libraries(ponylang_llvm_tester ${PROTOBUF_LIBRARIES})
-#target_link_libraries(ponylang_llvm_tester pthread ponyc ponyrt dl atomic LLVM-4.0 m blake2)
+target_link_libraries(pony_intellisense_cli ${PROTOBUF_LIBRARIES})

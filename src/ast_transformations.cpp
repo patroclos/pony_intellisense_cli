@@ -15,7 +15,7 @@ pass_opt_data_guard::~pass_opt_data_guard() {
 }
 
 struct seq_data {
-	const char *file;
+	const char *file = nullptr;
 	vector<ast_t *> nodes;
 };
 

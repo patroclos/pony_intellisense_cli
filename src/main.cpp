@@ -125,9 +125,6 @@ static bool parse_dir_files(ast_t *package, cli_opts_t options, pass_opt_t *pass
 static ast_t *load_package_custom(ast_t *from, cli_opts_t &options, pass_opt_t *pass) {
 	pony_assert(from != nullptr);
 
-
-	LOG("none: %u, iso: %u tag: %u\n",TK_NONE, TK_ISO, TK_TAG);
-
 	bool is_relative = false;
 	const char *full_path = options.path.c_str();
 	const char *qualified_name = full_path;

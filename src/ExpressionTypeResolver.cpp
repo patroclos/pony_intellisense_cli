@@ -1,9 +1,6 @@
 #include "ExpressionTypeResolver.hpp"
-#include <logging.hpp>
-#include <optional>
+#include "logging.hpp"
 #include "ast_transformations.hpp"
-
-using namespace std;
 
 std::vector<ast_t *> get_nominal_members(ast_t *nominal) {
 	pony_assert(nominal != nullptr);
@@ -239,14 +236,15 @@ ExpressionTypeResolver::ExpressionTypeResolver(ast_t *expression, pass_opt_t *pa
 	m_Frames.emplace(expression);
 }
 
-optional<PonyType> ExpressionTypeResolver::resolve() {
-	// don't rerun successfull resolve
+std::optional<PonyType> ExpressionTypeResolver::resolve(std::optional<PonyType> context) {
+	m_ContextType = std::move(context);
+	// don't rerun successful resolve
 	if (m_Type)
 		return m_Type;
 
 	for (;;) {
 		if (!resolveExpression(m_Frames.top())) {
-			return nullopt;
+			return std::nullopt;
 		} else if (m_Type) {
 			return m_Type;
 		}
@@ -335,7 +333,7 @@ bool ExpressionTypeResolver::resolveMemberAccess(type_resolve_frame_t &frame) {
 
 	pony_assert(ast_id(right) == TK_ID);
 
-	optional<PonyType> leftType = ExpressionTypeResolver(left, m_PassOpt).resolve();
+	std::optional<PonyType> leftType = ExpressionTypeResolver(left, m_PassOpt).resolve();
 
 	if (!leftType)
 		return false;
@@ -350,18 +348,23 @@ bool ExpressionTypeResolver::resolveMemberAccess(type_resolve_frame_t &frame) {
 	auto members = leftType->getMembers(m_PassOpt);
 
 	for (auto &member : leftType->getMembers(m_PassOpt))
-		if (!member.type() || member.m_Name != ast_name(right))
+		if (!member.get_type() || member.get_name() != ast_name(right))
 			continue;
 		else {
-			m_Type = member.type();
+			m_Type = member.get_type();
 			return true;
 		}
 	return false;
 }
 
-bool ExpressionTypeResolver::resolveExpression(type_resolve_frame_t &frame) {
-	LOG("TR: resolving frame %s\n", token_id_desc(ast_id(frame.m_Expression)));
+bool ExpressionTypeResolver::resolveArrow(type_resolve_frame_t &frame){
+	// TODO handle left viewpoint (cap etc)
+	LOG_AST(frame.m_Expression);
+	m_Frames.emplace(ast_childidx(frame.m_Expression, 1));
+	return true;
+}
 
+bool ExpressionTypeResolver::resolveExpression(type_resolve_frame_t &frame) {
 	switch (ast_id(frame.m_Expression)) {
 		case TK_CLASS:
 		case TK_STRUCT:
@@ -381,10 +384,15 @@ bool ExpressionTypeResolver::resolveExpression(type_resolve_frame_t &frame) {
 			m_Frames.emplace(ast_type(frame.m_Expression));
 			return true;
 
+		case TK_TYPEPARAMREF: {
+			if (!m_ContextType)
+				return false;
+			std::string typeparamName = ast_name(ast_child(frame.m_Expression));
+			m_Type = m_ContextType->getTypearg(typeparamName, m_PassOpt);
+		}
 		case TK_REFERENCE:
 		case TK_PACKAGEREF:
 		case TK_TYPEREF:
-		case TK_TYPEPARAMREF:
 		case TK_NEWREF:
 		case TK_NEWBEREF:
 		case TK_BEREF:
@@ -407,7 +415,6 @@ bool ExpressionTypeResolver::resolveExpression(type_resolve_frame_t &frame) {
 		case TK_MATCH_CAPTURE: {
 			ast_t *nominal = ast_childidx(frame.m_Expression, 1);
 			if (ast_id(nominal) == TK_NOMINAL) {
-				LOG_AST(nominal);
 				m_Frames.emplace(nominal);
 				return true;
 			}
@@ -423,6 +430,11 @@ bool ExpressionTypeResolver::resolveExpression(type_resolve_frame_t &frame) {
 		case TK_CALL:
 			m_Frames.emplace(ast_child(frame.m_Expression));
 			return true;
+		case TK_FUN:
+		case TK_BE:
+			LOG_AST(frame.m_Expression);
+			m_Frames.emplace(ast_childidx(frame.m_Expression, 4));
+			return true;
 		case TK_ASSIGN:
 			return resolveAssign(frame);
 		case TK_NOMINAL:
@@ -433,7 +445,11 @@ bool ExpressionTypeResolver::resolveExpression(type_resolve_frame_t &frame) {
 		case TK_TILDE:
 		case TK_CHAIN:
 			return resolveMemberAccess(frame);
-		default: LOG("TR: NO HANDLER!!");
+		case TK_ARROW:
+			return resolveArrow(frame);
+		default:
+			LOG("[ExpressionTypeResolver] No handler for %s!", token_id_desc(ast_id(frame.m_Expression)));
+			LOG_AST(frame.m_Expression);
 			return false;
 	}
 }

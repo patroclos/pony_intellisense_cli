@@ -1,7 +1,6 @@
 .idea
 NOTES.md
 cmake-build*
-lib*
 mid-edit
 ponys
 test.pony

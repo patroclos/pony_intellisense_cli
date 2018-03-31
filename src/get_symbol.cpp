@@ -9,8 +9,9 @@ void get_symbol_command(cli_opts_t &cli_opts) {
 	caret_t caret(cli_opts.line, cli_opts.pos);
 	ast_t *id = find_identifier_at(ast_child(cli_opts.program), &cli_opts.pass_opt, caret, cli_opts.file);
 
-	// TODO clean this up
-	// TODO support for non-scope identifiers (eg. function names in dot expression etc)
+	// TODO use collection of 'accessing' token types such as TK_DOT TK_TILDE TK_CALL
+	// etc to resolve to get the ast node with 'id' or reference(id) etc as its rhs
+	// then resolve lhs type(if there is a lhs) and find member OR ast_get the symbol
 	if (id != nullptr) {
 		LOG_AST(id);
 		ast_t *def = ast_get(id, ast_name(id), nullptr);

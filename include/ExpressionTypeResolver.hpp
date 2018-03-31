@@ -24,6 +24,9 @@ private:
 	std::stack<type_resolve_frame_t> m_Frames;
 	pass_opt_t *m_PassOpt;
 
+	// use to resolve typeparams etc within the type instance declaring the expression
+	std::optional<PonyType> m_ContextType;
+
 	std::optional<PonyType> m_Type;
 
 	bool resolveExpression(type_resolve_frame_t &frame);
@@ -33,8 +36,9 @@ private:
 	bool resolveAssign(type_resolve_frame_t &frame);
 	bool resolveQualify(type_resolve_frame_t &frame);
 	bool resolveMemberAccess(type_resolve_frame_t &frame);
+	bool resolveArrow(type_resolve_frame_t &frame);
 public:
 	// TODO constructor taking PonyType thistype for resolving such references (eg (-> thistype (typeparamref (id A))))
 	ExpressionTypeResolver(ast_t *expression, pass_opt_t *pass_opt);
-	std::optional<PonyType> resolve();
+	std::optional<PonyType> resolve(std::optional<PonyType> context = std::nullopt);
 };

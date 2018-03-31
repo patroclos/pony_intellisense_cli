@@ -4,10 +4,6 @@
 #include "ast_transformations.hpp"
 #include "logging.hpp"
 #include "ExpressionTypeResolver.hpp"
-#include "PonyType.hpp"
-
-// protobuf
-#include "scope.pb.h"
 
 #include <cstring>
 #include <functional>
@@ -49,14 +45,13 @@ void _dump_scope(cli_opts_t &options) {
 }
 
 static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
-	if (ast_source(*pAst) == nullptr)
-		return AST_OK;
-
 	auto scope_pass_data = static_cast<scope_pass_data_t *>(opt->data);
-
 
 	if (scope_pass_data == nullptr)
 		return AST_IGNORE;
+
+	if (ast_source(*pAst) == nullptr || scope_pass_data->options.file != ast_source(*pAst)->file)
+		return AST_OK;
 
 	auto options = &scope_pass_data->options;
 
@@ -79,157 +74,47 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 		ExpressionTypeResolver typeResolver(dot_left, opt);
 		auto resolved_type = typeResolver.resolve();
 		if (resolved_type.has_value()) {
-			LOG("Has value!");
-			LOG("%p", &resolved_type.value());
-			LOG("%s is the name", resolved_type.value().name().c_str());
-
-			auto members = resolved_type->getMembersRaw(opt);
-			LOG("Num members: %zu", members.size());
-
-			auto members_public = set<ast_t *>();
-			copy_if(members.begin(), members.end(), inserter(members_public, members_public.begin()), [](auto member) {
-				return ast_name(ast_first_child_of_type(member, TK_ID))[0] != '_';
-			});
-
-			LOG("Num members public: %zu", members_public.size());
-
 			for (auto &member : resolved_type->getMembers(opt)) {
 
-				if(member.name()[0] == '_')
+				if(member.get_name()[0] == '_')
 					continue;
 
 				Symbol *symbol = scope_pass_data->scope_msg.add_symbols();
-				symbol->set_name(member.m_Name);
-				symbol->set_docstring(member.docstring());
+				symbol->set_name(member.get_name());
+				symbol->set_docstring(member.get_docstring());
 				symbol->set_kind(member.m_Kind);
-				if(member.type())
+				if(member.get_type())
 				{
 					TypeInfo *typeInfo = symbol->mutable_type();
-					typeInfo->set_name(member.type()->name());
-					typeInfo->set_docstring(member.type()->docstring());
+					typeInfo->set_name(member.get_type()->name());
+					typeInfo->set_docstring(member.get_type()->docstring());
 				}
 
-				//if (member.name() == "apply")
-				//	if (member.m_Type) LOG("%s => %s", member.name().c_str(), member.type()->name().c_str());
+				if((member.m_Kind == fun || member.m_Kind == be) && member.get_type())
+				{
+					ast_t *params = ast_childidx(member.definition(), 3);
+					for(size_t i=0;i<ast_childcount(params);i++)
+					{
+						ast_t *param = ast_childidx(params, i);
+						pony_assert(param != nullptr && ast_id(param) == TK_PARAM);
+
+						std::string paramName = ast_name(ast_child(param));
+						optional<PonyType> paramType = ExpressionTypeResolver(ast_childidx(param, 1), opt).resolve(member.get_type());
+
+						auto paramInfo = symbol->add_parameters();
+						paramInfo->set_name(paramName);
+						if(paramType)
+						{
+							auto paramTypeInfo = paramInfo->mutable_type();
+							paramTypeInfo->set_name(paramType->name());
+							paramTypeInfo->set_docstring(paramType->docstring());
+						}
+					}
+				}
 			}
 
 		} else LOG("NO has value!!");
 		return AST_OK;
-
-		ast_t *resolved = resolve(dot_left, opt);
-
-		if (resolved != nullptr) {
-			// check if resolved has a members node, if not, try to resolve the type from a nominal
-			while (resolved != nullptr && ast_first_child_of_type(resolved, TK_MEMBERS) == nullptr) {
-				LOG("resolved is only a reference, going deeper");
-				resolved = resolve(resolved, opt);
-			}
-		}
-
-		if (resolved == nullptr) {
-			LOG("Failed to resolve type of dot lhs");
-			return AST_OK;
-		}
-
-		ast_t *type = nullptr;
-
-		{
-			ast_t *members = ast_first_child_of_type(resolved, TK_MEMBERS);
-			if (members == nullptr) {
-				LOG("Resolved %p has no members, getting type from nominal", resolved);
-				ast_t *nominal = ast_first_child_of_type(resolved, TK_NOMINAL);
-				if (nominal == nullptr)
-					return AST_OK;
-
-				type = (ast_t *) ast_data(nominal);
-			} else type = resolved;
-		}
-		PonyType ponyType = PonyType::fromDefinition(type);
-		for (auto &member : ponyType.getMembersRaw(opt)) {
-			ast_t *id = ast_child(member);
-			while (id != nullptr && ast_id(id) != TK_ID)
-				id = ast_sibling(id);
-			if (ast_id(id) != TK_ID || ast_name(id)[0] == '_')
-				continue;
-
-			const char *name = ast_name(id);
-			const char *kind = ast_print_type(member);
-
-			Symbol *symbol = scope_pass_data->scope_msg.add_symbols();
-			symbol->set_name(string(name));
-
-			symbol->set_cap(static_cast<RefCap>(ast_id(ast_child(member)) - TK_ISO));
-
-			ast_t *docstr = ast_childidx(member, 7);
-			if (docstr != nullptr && ast_id(docstr) == TK_STRING)
-				symbol->set_docstring(ast_name(docstr));
-
-			SymbolKind kind_enum;
-			if (SymbolKind_Parse(kind, &kind_enum))
-				symbol->set_kind(kind_enum);
-
-			ast_t *member_type = resolve(member, opt);
-			if (member_type != nullptr) {
-				TypeInfo *typeInfo = symbol->mutable_type();
-				typeInfo->set_name(ast_name(ast_child(member_type)));
-				typeInfo->set_default_cap(static_cast<RefCap>(ast_id(ast_childidx(member_type, 1)) - TK_ISO));
-
-				docstr = ast_childlast(member_type);
-				if (ast_id(docstr) == TK_STRING)
-					typeInfo->set_docstring(ast_name(docstr));
-			}
-
-			// ignore let,var etc on partial application
-			if (ast_id(*pAst) == TK_TILDE && kind != stringtab("fun") && kind != stringtab("be") &&
-			    kind != stringtab("new"))
-				continue;
-		}
-		/*
-		AST_GET_CHILDREN(type, _, __, ___, ____, members);
-		for (ast_t *member = ast_child(members); member != nullptr; member = ast_sibling(member)) {
-			ast_t *id = ast_child(member);
-			while (id != nullptr && ast_id(id) != TK_ID)
-				id = ast_sibling(id);
-			if (ast_id(id) != TK_ID || ast_name(id)[0] == '_')
-				continue;
-
-			const char *name = ast_name(id);
-			const char *kind = ast_print_type(member);
-
-			Symbol *symbol = scope_pass_data->scope_msg.add_symbols();
-			symbol->set_name(string(name));
-
-			symbol->set_cap(static_cast<RefCap>(ast_id(ast_child(member)) - TK_ISO));
-
-			ast_t *docstr = ast_childidx(member, 7);
-			if (docstr != nullptr && ast_id(docstr) == TK_STRING)
-				symbol->set_docstring(ast_name(docstr));
-
-			SymbolKind kind_enum;
-			if (SymbolKind_Parse(kind, &kind_enum))
-				symbol->set_kind(kind_enum);
-
-			ast_t *member_type = resolve(member, opt);
-			if (member_type != nullptr) {
-				TypeInfo *typeInfo = symbol->mutable_type();
-				typeInfo->set_name(ast_name(ast_child(member_type)));
-				typeInfo->set_default_cap(static_cast<RefCap>(ast_id(ast_childidx(member_type, 1)) - TK_ISO));
-
-				docstr = ast_childlast(member_type);
-				if (ast_id(docstr) == TK_STRING)
-					typeInfo->set_docstring(ast_name(docstr));
-			}
-
-			// ignore let,var etc on partial application
-			if (ast_id(*pAst) == TK_TILDE && kind != stringtab("fun") && kind != stringtab("be") &&
-			    kind != stringtab("new"))
-				continue;
-
-		}
-		 */
-
-		scope_pass_data->options.pass_opt.data = nullptr;
-		return AST_IGNORE;
 	} // end .,~,.>
 	else if (astid == TK_ID) {
 		size_t id_len = ast_name_len(*pAst);
@@ -242,8 +127,6 @@ static ast_result_t scope_pass(ast_t **pAst, pass_opt_t *opt) {
 				return AST_OK;
 		} else if (ast_id(ast_parent(*pAst)) == TK_DOT)
 			return AST_OK;
-
-		LOG_AST(ast_parent(ast_parent(*pAst)));
 
 		for (ast_t *current = *pAst; current != nullptr && ast_id(current) != TK_PROGRAM; current = ast_parent(current)) {
 			if (!ast_has_scope(current))

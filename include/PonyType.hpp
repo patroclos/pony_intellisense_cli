@@ -54,22 +54,38 @@ public:
 
 	void setTypeargs(ast_t *typeargs);
 
-	std::set<ast_t *> getMembersRaw(pass_opt_t *pass_opt) const;
-
 	std::vector<PonyMember> getMembers(pass_opt_t *pass_opt) const;
+
+	std::optional<PonyType> getTypearg(std::string &name, pass_opt_t *pass_opt);
 };
 
 struct PonyMember {
-public:
+private:
+	ast_t *m_Definition;
 	std::string m_Name;
 	std::string m_Docstring;
 	std::optional<PonyType> m_Type;
 	pony_refcap_t m_Capability;
-	SymbolKind m_Kind;
 public:
-	std::string name() const { return m_Name; }
+	SymbolKind m_Kind;
 
-	std::string docstring() const { return m_Docstring; }
+	ast_t *definition() const { return m_Definition; }
 
-	std::optional<PonyType> type() const { return m_Type; }
+	void set_definition(ast_t *definition) { m_Definition = definition; }
+
+	void set_name(const std::string &m_Name);
+
+	void set_docstring(const std::string &m_Docstring);
+
+	void set_type(const std::optional<PonyType> &m_Type);
+
+	void set_capability(pony_refcap_t m_Capability);
+
+	const std::string &get_name() const;
+
+	const std::string &get_docstring() const;
+
+	const std::optional<PonyType> &get_type() const;
+
+	pony_refcap_t get_capability() const;
 };
